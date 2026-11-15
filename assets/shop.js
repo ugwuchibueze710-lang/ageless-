@@ -64,7 +64,7 @@
       card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash'); }, 520);
   }
   function burst(x,y){
-    var cols=['#ff4fd8','#a45bff','#5ef2ff','#ffd88a','#fff'];
+    var cols=['#fff','#fff','#e6dcff','#c9b6ff','#fff'];
     for(var i=0;i<14;i++){
       var p=document.createElement('i'); p.className='trail';
       var a=Math.PI*2*i/14, d=30+Math.random()*30;
