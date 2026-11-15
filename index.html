@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ageless — Anime, Plush & Collectibles | Eastland Mall, Evansville IN</title>
+<meta name="description" content="Ageless — anime plush, light-up ear hats, figures, keychains and shoe charms inside Eastland Mall, 800 N Green River Rd, Evansville, IN. Order online for pickup or delivery.">
+<meta name="theme-color" content="#0b0712">
+<link rel="icon" href="assets/img/logo-sm.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" as="image" href="assets/img/store-hero.jpg">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="nav" id="nav">
+  <a href="#top" class="nav-logo" aria-label="Ageless home"><img src="assets/img/logo-sm.png" alt="Ageless"></a>
+  <nav class="nav-links">
+    <a href="#shop">Shop</a><a href="#visit">Visit Us</a>
+  </nav>
+  <button class="cart-btn" id="cartBtn" aria-label="Open cart">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="20.5" r="1.5" fill="currentColor"/><circle cx="17" cy="20.5" r="1.5" fill="currentColor"/></svg>
+    <span class="cart-count" id="cartCount">0</span>
+  </button>
+</header>
+
+<main id="top">
+<!-- ============ HERO: the real Ageless storefront ============ -->
+<section class="hero" id="hero">
+  <div class="scene" id="scene">
+    <div class="hero-bg" id="heroBg"></div>
+    <div class="fx grade"></div>
+    <div class="fx teal"></div>
+    <div class="fx rays"><span></span><span></span><span></span></div>
+    <div class="fx haze"></div>
+    <div class="fx spill" id="spill"></div>
+
+    <!-- the real AGELESS letters, re-lit as neon -->
+    <div class="neon-sign on" id="neonSign" role="img" aria-label="Ageless neon sign">
+      <img class="ns-fill" src="assets/img/logo-letters.png" alt="">
+      <img class="ns-tube" src="assets/img/logo-tube.png" alt="">
+    </div>
+
+    <!-- power cord: sign → down the stone pillar → wall outlet -->
+    <svg class="wire" id="wire" aria-hidden="true"><path id="wirePath"/><path id="wireShine"/></svg>
+    <div class="outlet" id="outlet" aria-hidden="true"><i></i><i></i><b class="plug"></b></div>
+    <button class="wall-switch" id="neonSwitch" aria-pressed="true" aria-label="Turn the neon sign off"><span class="lever"></span></button>
+    <div class="switch-hint" id="switchHint">Flip me</div>
+
+    <div class="fx sparkle" id="sparkle"></div>
+    <div class="fx vignette"></div>
+    <div class="fx grain"></div>
+
+    <!-- out-of-focus plush in the foreground -->
+    <div class="fg" id="fg" aria-hidden="true">
+      <img class="fg-a" src="assets/img/fg-purple-bunny.png" alt="">
+      <img class="fg-b" src="assets/img/fg-yellow-duck.png" alt="">
+      <img class="fg-c" src="assets/img/fg-rainbow-plush.png" alt="">
+    </div>
+
+  </div>
+    <div class="hero-copy" id="heroCopy">
+    <p class="kicker">Eastland Mall · Evansville, IN</p>
+    <h1>Anime, Plush &amp; <em>Collectibles</em></h1>
+    <div class="hero-ctas">
+      <a class="btn btn-neon" href="#shop">Shop Toys</a>
+      <a class="btn btn-ghost" href="#visit">Visit the Store</a>
+    </div>
+  </div>
+  <a class="hero-down" href="#shop" aria-label="Scroll to shop">⌄</a>
+</section>
+
+<div class="marquee" aria-hidden="true"><div class="mq-track">
+  <span>Plush</span><span>Light-Up Ear Hats</span><span>Anime Figures</span><span>Keychains</span><span>Shoe Charms</span><span>Wall Scrolls</span><span>Squishies</span>
+  <span>Plush</span><span>Light-Up Ear Hats</span><span>Anime Figures</span><span>Keychains</span><span>Shoe Charms</span><span>Wall Scrolls</span><span>Squishies</span>
+</div></div>
+
+<!-- ============ SHOP ============ -->
+<section class="shop" id="shop">
+  <div class="sec-head">
+    <h2>Shop the Store</h2>
+    <p>Real toys from the Ageless shelves. Add to cart, then pick up at the store or get it delivered.</p>
+  </div>
+  <div class="chips" id="chips" role="tablist"></div>
+  <div class="grid" id="grid"></div>
+</section>
+
+<!-- ============ VISIT ============ -->
+<section class="visit" id="visit">
+  <div class="visit-card">
+    <h2>Visit Us</h2>
+    <p class="v-addr">Inside Eastland Mall<br>800 N Green River Rd<br>Evansville, IN 47715</p>
+    <table class="hours">
+      <tr><td>Monday – Thursday</td><td>10 AM – 8 PM</td></tr>
+      <tr><td>Friday – Saturday</td><td>10 AM – 9 PM</td></tr>
+      <tr><td>Sunday</td><td>12 PM – 6 PM</td></tr>
+    </table>
+    <div class="hero-ctas">
+      <a class="btn btn-neon" href="tel:+13175992537">Call (317) 599-2537</a>
+      <a class="btn btn-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Ageless%20Eastland%20Mall%20Evansville">Directions</a>
+    </div>
+  </div>
+  <div class="visit-map">
+    <iframe title="Map to Ageless at Eastland Mall" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+      src="https://www.google.com/maps?q=Ageless,+800+N+Green+River+Rd,+Evansville,+IN+47715&output=embed"></iframe>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <img src="assets/img/logo-sm.png" alt="Ageless" class="f-logo">
+  <p>Anime · Plush · Figures · Collectibles — Eastland Mall, Evansville, IN</p>
+  <p class="credit">Website by <a href="https://blackdaddytech.com" target="_blank" rel="noopener">Black Daddy Tech</a></p>
+</footer>
+
+<!-- ============ CART DRAWER ============ -->
+<div class="drawer-bg" id="drawerBg"></div>
+<aside class="drawer" id="drawer" aria-label="Shopping cart" aria-hidden="true">
+  <div class="dr-head"><h3>Your Cart</h3><button class="dr-x" id="drawerX" aria-label="Close cart">×</button></div>
+  <div class="dr-body" id="drBody"></div>
+  <div class="dr-foot" id="drFoot">
+    <div class="dr-total"><span>Subtotal</span><b id="drTotal">$0.00</b></div>
+    <button class="btn btn-neon wide" id="toCheckout">Checkout</button>
+  </div>
+  <form class="checkout" id="checkout" hidden>
+    <button type="button" class="back" id="backToCart">← Back to cart</button>
+    <h4>Your details</h4>
+    <label>Full name<input name="name" required autocomplete="name"></label>
+    <label>Phone<input name="phone" type="tel" required autocomplete="tel"></label>
+    <label>Email<input name="email" type="email" autocomplete="email"></label>
+    <fieldset class="seg"><legend>How do you want it?</legend>
+      <label><input type="radio" name="method" value="pickup" checked> Pick up in store</label>
+      <label><input type="radio" name="method" value="delivery"> Delivery</label>
+    </fieldset>
+    <div class="addr" id="addrFields" hidden>
+      <label>Street address<input name="street" autocomplete="street-address"></label>
+      <div class="row"><label>City<input name="city" autocomplete="address-level2"></label><label>ZIP<input name="zip" inputmode="numeric" autocomplete="postal-code"></label></div>
+    </div>
+    <label>Notes (optional)<textarea name="notes" rows="2" placeholder="Character, color, size…"></textarea></label>
+    <div class="dr-total"><span>Total</span><b id="coTotal">$0.00</b></div>
+    <button class="btn btn-neon wide" type="submit" id="placeOrder">Place Order</button>
+    <p class="fine">The store will contact you to confirm your order.</p>
+    <p class="co-msg" id="coMsg" role="status"></p>
+  </form>
+</aside>
+
+<script src="assets/products.js"></script>
+<script src="assets/hero.js"></script>
+<script src="assets/shop.js"></script>
+<script src="assets/neon-bg.js"></script>
+</body>
+</html>
