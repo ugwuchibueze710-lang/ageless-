@@ -8,14 +8,14 @@
     fetch('/api/sub/'+encodeURIComponent(t)).then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.error||'This link is not valid.'); return j; }); }).then(function(s){
       var head='<p class="kicker">Order '+esc(s.order_code)+'</p>';
       if(s.status!=='pending'){ card(head+'<h1>'+(s.status==='approved'?'Replacement approved ✓':s.status==='declined'?'Refund on its way':'This offer is closed')+'</h1><p class="mut">'+
-        (s.status==='approved'?'Thanks! We\'ll get your order ready with the replacement.':s.status==='declined'?'You declined the replacement, so that item is refunded to your card. Refunds can take 5–10 business days to show.':'The store withdrew this offer. They will contact you.')+'</p><div class="btns"><a class="btn btn-neon" href="/">Back to the shop</a></div>'); return; }
+        (s.status==='approved'?'Thanks! We\'ll get your order ready with the replacement.':s.status==='declined'?(s.pay_at_pickup?'You declined the replacement, so that item was taken off your order. You won\'t pay for it.':'You declined the replacement, so that item is refunded to your card. Refunds can take 5–10 business days to show.'):'The store withdrew this offer. They will contact you.')+'</p><div class="btns"><a class="btn btn-neon" href="/">Back to the shop</a></div>'); return; }
       card(head+'<h1>An item in your order is unavailable</h1><p class="mut">We\'re sorry — <b>'+esc(s.original.name)+'</b> is no longer available. The store picked a replacement at the <b>same price</b>. Nothing changes unless you approve.</p>'+
         (s.message?'<p style="margin-top:10px">Message from the store: “'+esc(s.message)+'”</p>':'')+
         '<div class="swap"><figure><img src="'+esc(s.original.image_url||'/assets/img/logo-sm.png')+'" alt=""><figcaption>'+esc(s.original.name)+'<br><span class="mut">unavailable</span></figcaption></figure><div class="arrow">→</div>'+
         '<figure><img src="'+esc(s.offered.image_url||'/assets/img/logo-sm.png')+'" alt=""><figcaption><b>'+esc(s.offered.name)+'</b><br><span class="mut">'+s.original.qty+' × '+money(s.offered.unit_cents)+'</span></figcaption></figure></div>'+
-        '<div class="btns"><button class="btn btn-neon" id="yes">Yes, send the replacement</button><button class="btn btn-ghost" id="no">No thanks — refund me '+money(s.refund_cents)+'</button></div><p class="co-msg" id="m" role="status"></p>');
+        '<div class="btns"><button class="btn btn-neon" id="yes">Yes, send the replacement</button><button class="btn btn-ghost" id="no">'+(s.pay_at_pickup?'No thanks — remove it from my order':'No thanks — refund me '+money(s.refund_cents))+'</button></div><p class="co-msg" id="m" role="status"></p>');
       document.getElementById('yes').onclick=function(){ decide('approve',this); };
-      document.getElementById('no').onclick=function(){ if(confirm('Decline the replacement and get a refund of '+money(s.refund_cents)+'?')) decide('decline',this); };
+      document.getElementById('no').onclick=function(){ if(confirm(s.pay_at_pickup?'Decline the replacement and remove the item from your order?':'Decline the replacement and get a refund of '+money(s.refund_cents)+'?')) decide('decline',this); };
     }).catch(function(e){ card('<h1>Link not valid</h1><p class="mut">'+esc(e.message)+'</p>'); });
   }
   function decide(d,b){

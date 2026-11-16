@@ -10,7 +10,10 @@ export const PERMS = {
   sales: 'See sales totals on the home screen',
   settings: 'Change settings, shipping and the Square connection',
   staff: 'Invite and manage staff, and see their activity',
+  ai: 'Use the AI assistant (it can only do what this person is allowed to do)',
 };
+// Only an owner can hand out these.
+export const OWNER_ONLY_PERMS = ['staff', 'ai'];
 export function permsOf(st) { if (st.role === 'owner') return Object.keys(PERMS); try { return JSON.parse(st.perms || '[]').filter((p) => p in PERMS); } catch { return []; } }
 export function cleanPerms(list) { return [...new Set((Array.isArray(list) ? list : []).filter((p) => p in PERMS))]; }
 

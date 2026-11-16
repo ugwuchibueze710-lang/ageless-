@@ -1,6 +1,7 @@
 // Catalog reads, stock availability, holds (oversell protection) and order state changes.
 import { nowIso, log, fail } from './util.js';
 import { notify } from './email.js';
+import { getSettings, salePercent, salePrice } from './db.js';
 
 export const imgUrl = (r) => r.url || `/api/img/${r.id}`;
 
@@ -35,13 +36,15 @@ export async function publicCatalog(env, slug) {
   const vars = (await db.prepare(`SELECT id, product_id, name, sku, price_cents, stock FROM variations WHERE product_id IN (${q}) ORDER BY sort, id`).bind(...ids).all()).results;
   const imgs = (await db.prepare(`SELECT id, product_id, url FROM product_images WHERE product_id IN (${q}) ORDER BY sort, id`).bind(...ids).all()).results;
   const avail = await availability(env, vars.map((v) => v.id));
+  const S = await getSettings(env);
   const catById = Object.fromEntries(cats.map((c) => [c.id, c]));
   return {
     categories: cats,
     products: prods.map((p) => {
-      const pv = vars.filter((v) => v.product_id === p.id).map((v) => ({ id: v.id, name: v.name, sku: v.sku, price_cents: v.price_cents,
+      const pct = salePercent(S, p.category_id);
+      const pv = vars.filter((v) => v.product_id === p.id).map((v) => ({ id: v.id, name: v.name, sku: v.sku, price_cents: salePrice(v.price_cents, pct), list_cents: pct ? v.price_cents : null,
         available: avail[v.id], purchasable: avail[v.id] != null && avail[v.id] > 0 }));
-      return { id: p.id, slug: p.slug, name: p.name, description: p.description, featured: !!p.featured,
+      return { id: p.id, slug: p.slug, name: p.name, description: p.description, featured: !!p.featured, sale_percent: pct || null,
         category: catById[p.category_id]?.slug || null, category_name: catById[p.category_id]?.name || null,
         images: imgs.filter((i) => i.product_id === p.id).map((i) => imgUrl(i) + (i.url ? '' : '?v=' + encodeURIComponent(p.updated_at))),
         variations: pv, min_price_cents: pv.length ? Math.min(...pv.map((v) => v.price_cents)) : 0,

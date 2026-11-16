@@ -71,7 +71,8 @@
   <a class="hero-down" href="#shop" aria-label="Scroll to shop">⌄</a>
 </section>
 
-<div class="marquee" aria-hidden="true"><div class="mq-track">
+<div class="announce" id="announce" hidden role="status"></div>
+<div class="marquee" aria-hidden="true"><div class="mq-track" id="mqTrack">
   <span>Plush</span><span>Light-Up Ear Hats</span><span>Anime Figures</span><span>Keychains</span><span>Shoe Charms</span><span>Wall Scrolls</span><span>Squishies</span>
   <span>Plush</span><span>Light-Up Ear Hats</span><span>Anime Figures</span><span>Keychains</span><span>Shoe Charms</span><span>Wall Scrolls</span><span>Squishies</span>
 </div></div>
@@ -91,14 +92,14 @@
 <section class="visit" id="visit">
   <div class="visit-card">
     <h2>Visit Us</h2>
-    <p class="v-addr">Inside Eastland Mall<br>800 N Green River Rd<br>Evansville, IN 47715</p>
-    <table class="hours">
+    <p class="v-addr" id="vAddr">Inside Eastland Mall<br>800 N Green River Rd<br>Evansville, IN 47715</p>
+    <table class="hours" id="vHours">
       <tr><td>Monday – Thursday</td><td>10 AM – 8 PM</td></tr>
       <tr><td>Friday – Saturday</td><td>10 AM – 9 PM</td></tr>
       <tr><td>Sunday</td><td>12 PM – 6 PM</td></tr>
     </table>
     <div class="hero-ctas">
-      <a class="btn btn-neon" href="tel:+13175992537">Call (317) 599-2537</a>
+      <a class="btn btn-neon" id="vCall" href="tel:+13175992537">Call (317) 599-2537</a>
       <a class="btn btn-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Ageless%20Eastland%20Mall%20Evansville">Directions</a>
     </div>
   </div>
@@ -140,11 +141,6 @@
   <div class="dr-foot" id="drFoot">
     <div class="dr-total"><span>Subtotal</span><b id="drTotal">$0.00</b></div>
     <button class="btn btn-neon wide" id="toCheckout">Checkout</button>
-    <div class="demo-note" id="demoNote" hidden role="status">
-      <b>✦ Online checkout coming soon</b>
-      <p>This shop is a preview. Online orders aren’t open yet, so nothing is charged or sent.</p>
-      <p>To get these toys now, visit Ageless inside Eastland Mall or call <a href="tel:+13175992537">(317) 599-2537</a>.</p>
-    </div>
   </div>
   <form class="checkout" id="checkout" hidden novalidate>
     <button type="button" class="back" id="backToCart">← Back to cart</button>
@@ -158,6 +154,11 @@
         <label id="optShip"><input type="radio" name="method" value="shipping"> Ship to me <small>(US only)</small></label>
       </fieldset>
       <p class="fine" id="pickupNote"></p>
+      <fieldset class="seg" id="payWay"><legend>How do you want to pay?</legend>
+        <label id="optPayNow"><input type="radio" name="pay" value="card"> Pay now with card</label>
+        <label id="optPayStore"><input type="radio" name="pay" value="store"> Pay when I pick up <small>(cash or card at the counter)</small></label>
+      </fieldset>
+      <p class="fine soon" id="soonNote" hidden>Online payment and delivery are coming soon. For now, reserve your items and pay when you pick up.</p>
       <div class="addr" id="addrFields" hidden>
         <label>Street address<input name="street" autocomplete="address-line1" maxlength="120"></label>
         <label>Apt / suite (optional)<input name="street2" autocomplete="address-line2" maxlength="120"></label>
@@ -169,6 +170,7 @@
       <label>Notes (optional)<textarea name="notes" rows="2" maxlength="500" placeholder="Anything the store should know"></textarea></label>
     </div>
     <div class="sum" id="coSum">
+      <div class="dr-total sm save" id="coSaveRow" hidden><span>You save</span><b id="coSave">$0.00</b></div>
       <div class="dr-total sm"><span>Subtotal</span><b id="coSub">$0.00</b></div>
       <div class="dr-total sm"><span>Shipping</span><b id="coShip">Free</b></div>
       <div class="dr-total sm" id="coTaxRow" hidden><span>Sales tax</span><b id="coTax">$0.00</b></div>
@@ -181,7 +183,7 @@
       <div id="card-container"></div>
     </div>
     <button class="btn btn-neon wide" type="submit" id="placeOrder">Continue to payment</button>
-    <p class="fine">Payments are processed securely by Square. Your card details never touch this website.</p>
+    <p class="fine" id="sqNote">Payments are processed securely by Square. Your card details never touch this website.</p>
     <p class="co-msg" id="coMsg" role="status" aria-live="polite"></p>
   </form>
 </aside>

@@ -35,6 +35,12 @@
   <a href="#/more" data-nav="more"><b>⋯</b>More</a>
 </nav>
 <div class="toast" id="toast" role="status"></div>
+<button class="ai-fab" id="aiFab" hidden aria-label="Open the AI assistant">✦ Assistant</button>
+<aside class="ai-panel" id="aiPanel" hidden aria-label="AI assistant">
+  <div class="ai-head"><b>✦ Personal assistant</b><span class="muted small" id="aiSub"></span><button class="btn small" id="aiClear" title="Start over">New</button><button class="ai-x" id="aiX" aria-label="Close">×</button></div>
+  <div class="ai-log" id="aiLog"></div>
+  <form class="ai-in" id="aiForm"><textarea id="aiQ" rows="2" placeholder="Ask or tell me what to do… e.g. “Put keychains 50% off until Sunday”"></textarea><button class="btn primary" id="aiSend">Send</button></form>
+</aside>
 <script src="/admin/admin.js"></script>
 </body>
 </html>

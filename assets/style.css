@@ -313,3 +313,13 @@ body.page{min-height:100vh;display:flex;flex-direction:column}
 .swap figcaption{font-size:14px;margin-top:6px}.swap .arrow{font-size:26px;text-shadow:0 0 10px var(--pink)}
 .btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
 .dr-total[hidden],#coStep1[hidden],#coStep2[hidden],.fine[hidden]{display:none}
+
+/* ---------- announcement, sale, pay choice ---------- */
+.announce{position:relative;z-index:5;display:flex;justify-content:center;flex-wrap:wrap;gap:6px 24px;padding:10px 16px;text-align:center;font-weight:700;font-size:15px;letter-spacing:.03em;color:#140f20;background:linear-gradient(90deg,#fff,#efe6ff,#fff);box-shadow:0 0 22px rgba(255,255,255,.5)}
+.announce[hidden]{display:none}
+.c-price s,.pd-info .c-price s,.li-price s{color:var(--mut);font-size:.7em;font-weight:500;text-shadow:none;margin-right:4px}
+.badge-st.sale{background:#fff;color:#140f20;box-shadow:0 0 12px rgba(255,255,255,.7)}
+.badge-st.store{color:var(--mut)}
+.dr-total.save b{color:#c9f7d8}
+#payWay[hidden],.soon[hidden],#sqNote[hidden]{display:none}
+.soon{background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.25);border-radius:10px;padding:10px 12px;text-align:left}

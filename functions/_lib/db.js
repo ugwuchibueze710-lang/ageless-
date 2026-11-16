@@ -47,6 +47,10 @@ const MIGRATIONS = [
    CREATE TABLE IF NOT EXISTS invites (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, name TEXT, email TEXT, role TEXT NOT NULL, perms TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, used_by INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
    CREATE TABLE IF NOT EXISTS staff_activity (id INTEGER PRIMARY KEY, staff_id INTEGER, email TEXT, action TEXT NOT NULL, detail TEXT, path TEXT, ip TEXT, at TEXT NOT NULL);
    CREATE INDEX IF NOT EXISTS idx_act_staff ON staff_activity(staff_id, id)`,
+  // v3 — pay at pickup, sale pricing
+  `ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'card';
+   ALTER TABLE orders ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE order_items ADD COLUMN list_cents INTEGER`,
 ];
 
 // The 11 items already on the site: photos cut from the store's own Google photos.
@@ -74,9 +78,29 @@ const DEFAULT_SETTINGS = {
   shipping_mode: 'flat', shipping_flat_cents: '', shipping_free_over_cents: '', shipping_tiers: '[]',
   shipping_note: 'Ships within the United States only.',
   pickup_instructions: 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715. We will email you when your order is ready.',
-  store_name: 'Ageless', store_email: '', store_phone: '',
+  store_name: 'Ageless', store_email: '', store_phone: '(317) 599-2537',
   hold_minutes: '10',
+  pay_in_store_enabled: '1',
+  pickup_ready_text: 'Usually ready within 2 hours during store hours.',
+  shipping_time_text: 'Ships in 1–2 business days.',
+  pickup_hold_days: '3',
+  site_announcement: '',
+  marquee_items: JSON.stringify(['Plush', 'Light-Up Ear Hats', 'Anime Figures', 'Keychains', 'Shoe Charms', 'Wall Scrolls', 'Squishies']),
+  store_address: 'Inside Eastland Mall\n800 N Green River Rd\nEvansville, IN 47715',
+  store_hours: JSON.stringify([['Monday – Thursday', '10 AM – 8 PM'], ['Friday – Saturday', '10 AM – 9 PM'], ['Sunday', '12 PM – 6 PM']]),
+  sale_enabled: '0', sale_percent: '', sale_category_id: '', sale_label: '', sale_ends: '',
 };
+
+// Active sale percent for a product's category (0 when no sale).
+export function salePercent(s, categoryId) {
+  if (s.sale_enabled !== '1') return 0;
+  const pct = Math.trunc(Number(s.sale_percent));
+  if (!(pct >= 1 && pct <= 90)) return 0;
+  if (s.sale_ends && Date.now() > Date.parse(s.sale_ends + 'T23:59:59-05:00')) return 0;
+  if (s.sale_category_id && String(s.sale_category_id) !== String(categoryId)) return 0;
+  return pct;
+}
+export const salePrice = (cents, pct) => (pct ? Math.round(cents * (100 - pct) / 100) : cents);
 
 let ready = null;
 export function ensureSchema(env) {

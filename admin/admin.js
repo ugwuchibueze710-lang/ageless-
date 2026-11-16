@@ -32,6 +32,29 @@
   function go(h) { if (location.hash === h) route(); else location.hash = h; }
   function busy(btn, on) { if (!btn) return; btn.disabled = on; if (on) { btn.dataset.t = btn.textContent; btn.textContent = 'Working…'; } else if (btn.dataset.t) btn.textContent = btn.dataset.t; }
   function act(btn, p, ok) { busy(btn, true); return p.then(function (r) { busy(btn, false); if (ok) toast(ok); return r; }).catch(function (e) { busy(btn, false); toast(e.message, true); throw e; }); }
+  function jsonList(v) { try { var a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  // Before saving: run the contradiction check (instant rules + AI review when available). If it finds problems, show them with fixes.
+  function checkedSave(btn, kind, data, save, extra) {
+    busy(btn, true);
+    return api('/admin/check', { method: 'POST', body: Object.assign({ kind: kind, data: data }, extra || {}) }).catch(function () { return { issues: [] }; }).then(function (r) {
+      busy(btn, false);
+      if (!r.issues || !r.issues.length) return act(btn, save());
+      return new Promise(function (resolve) {
+        var bad = r.issues.some(function (i) { return i.level === 'error'; });
+        var m = modal('<h2>' + (bad ? 'Hold on — this setup contradicts itself' : 'Before you save') + '</h2>' +
+          '<ul class="issues">' + r.issues.map(function (i, n) { return '<li class="' + esc(i.level) + '"><b>' + (i.level === 'error' ? '⛔ ' : '⚠️ ') + esc(i.message) + '</b>' + (i.fix ? '<br><span class="muted small">Suggestion: ' + esc(i.fix) + '</span>' : '') +
+            (i.patch ? '<br><button type="button" class="btn small" data-fix="' + n + '">Apply this fix</button>' : '') + '</li>'; }).join('') + '</ul>' +
+          (r.ai ? '<p class="muted small">Checked by the assistant' + (r.aiNote ? ': ' + esc(r.aiNote) : '') + '</p>' : '') +
+          '<div class="row"><button class="btn" data-close>Go back & edit</button><button class="btn ' + (bad ? 'danger' : 'primary') + '" id="anyway">Save anyway</button></div>');
+        m.addEventListener('click', function (e) {
+          var fx = e.target.closest('[data-fix]');
+          if (fx) { var p = r.issues[+fx.dataset.fix].patch; Object.keys(p).forEach(function (k) { data[k] = p[k]; }); fx.textContent = 'Fix applied ✓'; fx.disabled = true; }
+          if (e.target.closest('[data-close]')) resolve(null);
+        });
+        $('#anyway', m).onclick = function () { m.remove(); act(btn, save()).then(resolve, function () { resolve(null); }); };
+      });
+    });
+  }
   function modal(html) {
     var m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div class="sheet">' + html + '</div>';
     m.addEventListener('click', function (e) { if (e.target === m || e.target.closest('[data-close]')) m.remove(); });
@@ -43,7 +66,65 @@
     $$('[data-nav]').forEach(function (a) { a.classList.toggle('on', a.dataset.nav === name); });
     $$('[data-perm]').forEach(function (a) { a.hidden = !can(a.dataset.perm); });
   }
-  function shell(on) { $('#top').hidden = !on; $('#tabbar').hidden = !on; }
+  function shell(on) { $('#top').hidden = !on; $('#tabbar').hidden = !on; $('#aiFab').hidden = !(on && can('ai')); if (!on) $('#aiPanel').hidden = true; }
+
+  // ---------------- AI assistant ----------------
+  var AI = { msgs: [], status: null };
+  try { AI.msgs = JSON.parse(sessionStorage.getItem('ag-ai') || '[]'); } catch (e) { AI.msgs = []; }
+  function aiSave() { try { sessionStorage.setItem('ag-ai', JSON.stringify(AI.msgs.slice(-30))); } catch (e) {} }
+  function aiRender() {
+    var log = $('#aiLog');
+    log.innerHTML = (AI.msgs.length ? '' : '<div class="ai-msg a">Hi ' + esc(me ? me.name.split(' ')[0] : '') + '! I can look things up and make changes for you — sales, prices, quantities, orders, settings, the website banner, staff. I always show you exactly what I\'ll change and wait for you to tap Confirm.\n\nTry: “What sold today?”, “Put keychains 50% off until Sunday”, “Which items are out of stock?”</div>') +
+      AI.msgs.map(function (m, i) {
+        if (m.role === 'sys') return '<div class="ai-msg sys">' + esc(m.content) + '</div>';
+        var h = '<div class="ai-msg ' + (m.role === 'user' ? 'u' : 'a') + '">' + esc(m.content) + '</div>';
+        if (m.proposals && m.proposals.length) {
+          var risky = m.proposals.some(function (p) { return p.risk; });
+          h += '<div class="ai-props"><h4>' + (m.done ? (m.done === 'applied' ? '✓ Applied' : 'Not applied') : 'Ready to change') + '</h4><ol>' + m.proposals.map(function (p) { return '<li>' + esc(p.summary) + (p.risk ? '<span class="risk">⚠ ' + esc(p.risk) + '</span>' : '') + (p.result ? '<span class="' + (p.result.ok ? 'muted' : 'risk') + ' small"> — ' + (p.result.ok ? 'done' : esc(p.result.error)) + '</span>' : '') + '</li>'; }).join('') + '</ol>' +
+            (m.done ? '' : (risky ? '<label class="check"><input type="checkbox" data-sure="' + i + '"> Yes, I\'m sure — I understand the warning above</label>' : '') +
+              '<div class="row"><button class="btn primary small" data-apply="' + i + '">Confirm</button><button class="btn small" data-skip="' + i + '">Don\'t do it</button></div>') + '</div>';
+        }
+        return h;
+      }).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+  function aiOpen(v) {
+    $('#aiPanel').hidden = !v;
+    if (!v) return;
+    aiRender(); $('#aiQ').focus();
+    if (!AI.status) api('/admin/ai/status').then(function (r) { AI.status = r; $('#aiSub').textContent = r.configured ? '' : 'not set up yet'; }).catch(function () {});
+  }
+  function aiAsk(q) {
+    AI.msgs.push({ role: 'user', content: q }); aiSave(); aiRender();
+    var t = document.createElement('div'); t.className = 'ai-typing'; t.textContent = 'Thinking…'; $('#aiLog').appendChild(t); $('#aiLog').scrollTop = 1e9;
+    $('#aiSend').disabled = true;
+    var hist = AI.msgs.filter(function (m) { return m.role === 'user' || m.role === 'assistant' || m.role === 'sys'; }).map(function (m) { return { role: m.role === 'user' ? 'user' : 'assistant', content: m.role === 'sys' ? '[note] ' + m.content : m.content }; });
+    api('/admin/ai/chat', { method: 'POST', body: { messages: hist } }).then(function (r) {
+      AI.msgs.push({ role: 'assistant', content: r.reply || '', proposals: r.proposals || [] });
+    }).catch(function (e) { AI.msgs.push({ role: 'sys', content: 'Assistant error: ' + e.message }); })
+      .then(function () { $('#aiSend').disabled = false; aiSave(); aiRender(); });
+  }
+  function aiInit() {
+    $('#aiFab').onclick = function () { aiOpen(true); };
+    $('#aiX').onclick = function () { aiOpen(false); };
+    $('#aiClear').onclick = function () { AI.msgs = []; aiSave(); aiRender(); };
+    $('#aiForm').onsubmit = function (e) { e.preventDefault(); var q = $('#aiQ').value.trim(); if (!q) return; $('#aiQ').value = ''; aiAsk(q); };
+    $('#aiQ').onkeydown = function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#aiForm').requestSubmit(); } };
+    $('#aiLog').addEventListener('click', function (e) {
+      var ap = e.target.closest('[data-apply]'), sk = e.target.closest('[data-skip]');
+      if (sk) { var m0 = AI.msgs[+sk.dataset.skip]; m0.done = 'skipped'; AI.msgs.push({ role: 'sys', content: 'You chose not to apply those changes.' }); aiSave(); aiRender(); return; }
+      if (!ap) return;
+      var i = +ap.dataset.apply, m = AI.msgs[i], sure = $('[data-sure="' + i + '"]');
+      if (m.proposals.some(function (p) { return p.risk; }) && !(sure && sure.checked)) { toast('Tick "Yes, I\'m sure" first — this includes a risky change.', true); return; }
+      act(ap, api('/admin/ai/apply', { method: 'POST', body: { sure: !!(sure && sure.checked), actions: m.proposals.map(function (p) { return { method: p.method, path: p.path, body: p.body }; }) } })).then(function (r) {
+        r.results.forEach(function (x, n) { m.proposals[n].result = x; });
+        var ok = r.results.length === m.proposals.length && r.results.every(function (x) { return x.ok; });
+        m.done = ok ? 'applied' : 'partial';
+        AI.msgs.push({ role: 'sys', content: ok ? 'Applied: ' + m.proposals.map(function (p) { return p.summary; }).join('; ') : 'Some changes failed: ' + r.results.filter(function (x) { return !x.ok; }).map(function (x) { return x.error; }).join('; ') });
+        aiSave(); aiRender(); route();
+      });
+    });
+  }
   function route() {
     $$('.modal').forEach(function (m) { m.remove(); });
     var h = location.hash.replace(/^#/, '') || '/';
@@ -64,6 +145,7 @@
     if (need && !can(need)) { app.innerHTML = '<p class="alert">You don\'t have access to this page. Ask the owner if you need it.</p>'; return; }
     (views[v] || viewHome)();
   }
+  aiInit();
   window.addEventListener('hashchange', route);
   $('#logoutBtn').addEventListener('click', function () { api('/admin/logout', { method: 'POST' }).finally(function () { me = null; go('#/login'); }); });
 
@@ -118,7 +200,7 @@
   }
   function orderRow(o) {
     return '<a class="item" href="#/orders/' + o.id + '">' + (o.image_url ? '<img src="' + esc(o.image_url) + '" alt="">' : '<span class="thumb"></span>') +
-      '<span><span class="t">' + esc(o.name) + '</span> <span class="muted small">' + esc(o.code) + '</span><br>' + fulBadge(o.fulfillment) + ' ' + statusBadge(o.status) + '</span>' +
+      '<span><span class="t">' + esc(o.name) + '</span> <span class="muted small">' + esc(o.code) + '</span><br>' + fulBadge(o.fulfillment) + ' ' + statusBadge(o.status) + (o.payment_method === 'store' && !o.paid_at && ['canceled','expired'].indexOf(o.status) < 0 ? ' <span class="badge b-warn">Pay at pickup</span>' : '') + '</span>' +
       '<span class="right"><span class="money">' + money(o.total_cents) + '</span><br><span class="muted small">' + when(o.created_at) + '</span></span></a>';
   }
 
@@ -149,34 +231,37 @@
   function viewOrder(id) {
     api('/admin/orders/' + id).then(function (r) {
       var o = r.order, owner = can('refunds'), remaining = o.total_cents - o.refunded_cents;
+      var unpaidStore = o.payment_method === 'store' && !o.paid_at, open = ['processing', 'ready_for_pickup', 'awaiting_approval'].indexOf(o.status) >= 0;
       var addr = o.fulfillment === 'shipping' ? esc(o.ship_street) + (o.ship_street2 ? '<br>' + esc(o.ship_street2) : '') + '<br>' + esc(o.ship_city) + ', ' + esc(o.ship_state) + ' ' + esc(o.ship_zip) : '';
       var actions = [];
       if (['paid'].indexOf(o.status) >= 0) actions.push(['processing', 'Start processing']);
       if (['paid', 'processing', 'awaiting_approval'].indexOf(o.status) >= 0 && o.fulfillment === 'pickup') actions.push(['ready_for_pickup', 'Ready for pickup (emails customer)']);
       if (['paid', 'processing', 'awaiting_approval'].indexOf(o.status) >= 0 && o.fulfillment === 'shipping') actions.push(['shipped', 'Mark shipped (emails customer)']);
-      if (['ready_for_pickup', 'shipped', 'paid', 'processing'].indexOf(o.status) >= 0) actions.push(['completed', o.fulfillment === 'pickup' ? 'Picked up — complete' : 'Delivered — complete']);
+      if (['ready_for_pickup', 'shipped', 'paid', 'processing'].indexOf(o.status) >= 0 && !unpaidStore) actions.push(['completed', o.fulfillment === 'pickup' ? 'Picked up — complete' : 'Delivered — complete']);
       var pendingSubs = o.substitutions.filter(function (s) { return s.status === 'pending'; });
-      app.innerHTML = '<a href="#/orders" class="muted small">← Orders</a><div class="row between"><h1>' + esc(o.code) + '</h1><div class="row">' + fulBadge(o.fulfillment) + statusBadge(o.status) + '</div></div>' +
+      app.innerHTML = '<a href="#/orders" class="muted small">← Orders</a><div class="row between"><h1>' + esc(o.code) + '</h1><div class="row">' + fulBadge(o.fulfillment) + statusBadge(o.status) + (o.payment_method === 'store' ? (o.paid_at ? '<span class="badge b-ok">Paid at store</span>' : '<span class="badge b-warn">Pay at pickup — not paid</span>') : '') + '</div></div>' +
+        (unpaidStore && open ? '<div class="alert">The customer pays when they pick up. Collect <b>' + money(o.total_cents) + '</b> plus any sales tax at the register, then tap <b>Paid & picked up</b>.</div>' : '') +
         '<div class="grid g2"><div class="card"><h2>Customer</h2><dl class="kv"><dt>Name</dt><dd>' + esc(o.name) + '</dd><dt>Phone</dt><dd><a href="tel:' + esc(o.phone) + '">' + esc(o.phone) + '</a></dd>' +
         '<dt>Email</dt><dd><a href="mailto:' + esc(o.email) + '">' + esc(o.email) + '</a></dd>' + (addr ? '<dt>Ship to</dt><dd>' + addr + '</dd>' : '<dt>Pickup</dt><dd>In store at Eastland Mall</dd>') +
         (o.notes ? '<dt>Note</dt><dd>' + esc(o.notes) + '</dd>' : '') + (o.tracking_number ? '<dt>Tracking</dt><dd>' + esc(o.tracking_carrier || '') + ' ' + esc(o.tracking_number) + '</dd>' : '') + '</dl></div>' +
         '<div class="card"><h2>Payment</h2><dl class="kv"><dt>Subtotal</dt><dd>' + money(o.subtotal_cents) + '</dd>' + (o.shipping_cents ? '<dt>Shipping</dt><dd>' + money(o.shipping_cents) + '</dd>' : '') +
         '<dt>Tax</dt><dd>' + money(o.tax_cents) + '</dd><dt>Total</dt><dd class="money">' + money(o.total_cents) + '</dd>' + (o.refunded_cents ? '<dt>Refunded</dt><dd>' + money(o.refunded_cents) + '</dd>' : '') +
-        '<dt>Card</dt><dd>' + (o.card_last4 ? esc(o.card_brand || 'Card') + ' •••• ' + esc(o.card_last4) : '—') + '</dd><dt>Placed</dt><dd>' + when(o.created_at) + '</dd>' + (o.paid_at ? '<dt>Paid</dt><dd>' + when(o.paid_at) + '</dd>' : '') +
+        (o.discount_cents ? '<dt>Sale savings</dt><dd>' + money(o.discount_cents) + '</dd>' : '') + '<dt>Payment</dt><dd>' + (o.payment_method === 'store' ? (o.paid_at ? 'Paid at the store (' + esc((o.payment_status || '').replace('PAID_IN_STORE_', '').toLowerCase()) + ')' : 'Pay at pickup — not paid yet') : o.card_last4 ? esc(o.card_brand || 'Card') + ' •••• ' + esc(o.card_last4) : '—') + '</dd><dt>Placed</dt><dd>' + when(o.created_at) + '</dd>' + (o.paid_at ? '<dt>Paid</dt><dd>' + when(o.paid_at) + '</dd>' : '') +
         (o.square_payment_id ? '<dt>Square</dt><dd class="small muted">' + esc(o.square_payment_id) + '</dd>' : '') + '</dl></div></div>' +
         '<div class="card"><h2>Items</h2><div class="list">' + o.items.map(function (it) {
           var st = it.status === 'ok' ? '' : '<span class="badge ' + (it.status === 'substituted' ? 'b-ok' : 'b-warn') + '">' + esc(it.status.replace('_', ' ')) + '</span>';
           var btns = '';
           if (['paid', 'processing', 'awaiting_approval'].indexOf(o.status) >= 0) {
             if (it.status === 'ok') btns = '<button class="btn small" data-unav="' + it.id + '">Mark unavailable</button>';
-            if (it.status === 'unavailable') btns = '<button class="btn small primary" data-sub="' + it.id + '">Offer substitute</button>' + (owner ? ' <button class="btn small danger" data-refitem="' + it.id + '">Refund item</button>' : '');
+            if (it.status === 'unavailable') btns = '<button class="btn small primary" data-sub="' + it.id + '">Offer substitute</button>' + (unpaidStore ? ' <button class="btn small danger" data-refitem="' + it.id + '">Remove item</button>' : owner ? ' <button class="btn small danger" data-refitem="' + it.id + '">Refund item</button>' : '');
           }
           return '<div class="item"><img src="' + esc(it.image_url || '') + '" alt=""><span><span class="t">' + esc(it.name) + '</span>' + (it.variation_name && it.variation_name !== 'Regular' ? ' — ' + esc(it.variation_name) : '') +
-            (it.original_name ? '<br><span class="muted small">Originally: ' + esc(it.original_name) + '</span>' : '') + '<br><span class="muted small">' + it.qty + ' × ' + money(it.unit_cents) + '</span> ' + st + '</span>' +
+            (it.original_name ? '<br><span class="muted small">Originally: ' + esc(it.original_name) + '</span>' : '') + '<br><span class="muted small">' + it.qty + ' × ' + (it.list_cents ? '<s>' + money(it.list_cents) + '</s> ' : '') + money(it.unit_cents) + '</span> ' + st + '</span>' +
             '<span class="right"><span class="money">' + money(it.unit_cents * it.qty) + '</span><br>' + btns + '</span></div>';
         }).join('') + '</div>' +
         (pendingSubs.length ? pendingSubs.map(function (s) { return '<div class="alert">Waiting for the customer to approve <b>' + esc(s.new_name) + '</b> (sent ' + when(s.created_at) + '). <button class="btn small" data-withdraw="' + s.id + '">Withdraw offer</button></div>'; }).join('') : '') + '</div>' +
         '<div class="card"><h2>Update order</h2>' + (actions.length ? '<div class="row">' + actions.map(function (a) { return '<button class="btn' + (a[0] !== 'completed' ? ' primary' : '') + '" data-st="' + a[0] + '">' + a[1] + '</button>'; }).join('') + '</div>' : '<p class="muted">No status changes available.</p>') +
+        (unpaidStore && open ? '<div class="sep"></div><div class="row"><button class="btn primary" id="paidStore">Paid & picked up</button><button class="btn danger" id="noShow">Cancel — not picked up</button></div>' : '') +
         (owner && o.square_payment_id && remaining > 0 ? '<div class="sep"></div><div class="row"><button class="btn danger" id="refundBtn">Refund…</button><span class="muted small">' + money(remaining) + ' can still be refunded</span></div>' : '') +
         '<div class="sep"></div><div class="row"><button class="btn small" data-resend="customer_confirmation">Resend confirmation</button></div>' +
         '<div class="sep"></div><form id="noteF" class="row"><input name="note" placeholder="Add an internal note" style="flex:1"><button class="btn small">Add note</button></form></div>' +
@@ -196,8 +281,17 @@
       $$('[data-sub]').forEach(function (b) { b.onclick = function () { substitutePicker(o, b.dataset.sub, id); }; });
       $$('[data-refitem]').forEach(function (b) { b.onclick = function () {
         var it = o.items.find(function (x) { return String(x.id) === b.dataset.refitem; });
+        if (unpaidStore) { if (confirm('Remove ' + it.name + ' from this order? The customer has not paid, so their total just goes down by ' + money(it.unit_cents * it.qty) + '.')) act(b, api('/admin/orders/' + o.id + '/items/' + it.id + '/remove', { method: 'POST' }), 'Item removed').then(function () { viewOrder(id); }); return; }
         refundModal(o, id, { itemIds: [it.id], amount: dollars(it.unit_cents * it.qty), reason: 'Item unavailable: ' + it.name });
       }; });
+      if ($('#paidStore')) $('#paidStore').onclick = function () {
+        var m = modal('<h2>Paid & picked up</h2><p>Collect <b>' + money(o.total_cents) + '</b> plus any sales tax at the register (ring it up in Square as usual).</p><form class="form" id="psf"><label>How did they pay?<select name="method"><option value="card">Card</option><option value="cash">Cash</option><option value="other">Other</option></select></label><div class="row"><button class="btn primary">Mark paid & complete</button><button type="button" class="btn" data-close>Cancel</button></div></form>');
+        $('#psf', m).onsubmit = function (e) { e.preventDefault(); act(e.target.querySelector('.primary'), api('/admin/orders/' + o.id + '/paid-in-store', { method: 'POST', body: { method: e.target.method.value } }), 'Order completed').then(function () { m.remove(); viewOrder(id); }); };
+      };
+      if ($('#noShow')) $('#noShow').onclick = function () {
+        var m = modal('<h2>Cancel this order?</h2><p class="muted">Nothing was charged. The items go back into stock and the customer gets a cancellation email.</p><form class="form" id="nsf"><label>Reason (sent to the customer)<input name="reason" value="Not picked up within the hold time"></label><div class="row"><button class="btn danger">Cancel order</button><button type="button" class="btn" data-close>Keep it</button></div></form>');
+        $('#nsf', m).onsubmit = function (e) { e.preventDefault(); act(e.target.querySelector('.danger'), api('/admin/orders/' + o.id + '/cancel-unpaid', { method: 'POST', body: { reason: e.target.reason.value } }), 'Order canceled, items back in stock').then(function () { m.remove(); viewOrder(id); }); };
+      };
       $$('[data-withdraw]').forEach(function (b) { b.onclick = function () { act(b, api('/admin/substitutions/' + b.dataset.withdraw + '/withdraw', { method: 'POST' }), 'Offer withdrawn').then(function () { viewOrder(id); }); }; });
       $$('[data-resend]').forEach(function (b) { b.onclick = function () { act(b, api('/admin/orders/' + o.id + '/resend', { method: 'POST', body: { kind: b.dataset.resend } })).then(function (r) { toast(r.status === 'sent' ? 'Email sent' : 'Saved to Emails (sending not set up)'); viewOrder(id); }); }; });
       if ($('#refundBtn')) $('#refundBtn').onclick = function () { refundModal(o, id, {}); };
@@ -325,7 +419,9 @@
         e.preventDefault(); var f = e.target;
         var body = { name: f.name.value, description: f.description.value, category_id: f.category_id.value || null, status: f.status.value, featured: f.featured.checked,
           variations: $$('tr', vb).map(function (tr) { return { id: tr.dataset.id ? Number(tr.dataset.id) : null, name: $('[name=vn]', tr).value, price: $('[name=vp]', tr).value, stock: $('[name=vs]', tr).value, sku: $('[name=vk]', tr).value }; }) };
-        act(f.querySelector('.big'), api(isNew ? '/admin/products' : '/admin/products/' + p.id, { method: isNew ? 'POST' : 'PUT', body: body })).then(function (r) {
+        checkedSave(f.querySelector('.big'), 'product', body, function () { return api(isNew ? '/admin/products' : '/admin/products/' + p.id, { method: isNew ? 'POST' : 'PUT', body: body }); },
+          { productId: isNew ? null : p.id, hasPhoto: queued.length > 0 || (p.images || []).length > 0 }).then(function (r) {
+          if (!r) return;
           var pid = isNew ? r.id : p.id;
           var next = queued.length ? uploadPhotos(pid, queued) : Promise.resolve();
           return next.then(function () {
@@ -412,6 +508,26 @@
         '<div id="tiers"><p class="muted small">Rate by order total: each row = "orders from $X pay $Y shipping".</p><table class="vtable"><tbody id="tb"></tbody></table><button type="button" class="btn small" id="addT">+ Add row</button></div>' +
         '<label>Free shipping on orders over ($, optional)<input name="shipping_free_over_cents" inputmode="decimal" value="' + esc(dollars(s.shipping_free_over_cents)) + '"></label>' +
         '<label>Shipping note (shown at checkout)<input name="shipping_note" value="' + esc(s.shipping_note) + '"></label>' +
+        '<p class="muted small">Delivery only appears on the website once Square is connected, because delivery orders must be paid online.</p>' +
+        '<h2 style="margin-top:8px">Paying & timing</h2>' +
+        '<label class="check"><input type="checkbox" name="pay_in_store_enabled"' + (s.pay_in_store_enabled === '1' ? ' checked' : '') + '> Let pickup customers pay at the store (cash or card at the counter)</label>' +
+        '<p class="muted small">While Square is not connected, pay-at-pickup is the only way to order, so it stays on.</p>' +
+        '<label>When is a pickup order usually ready? (shown at checkout and in the confirmation email)<input name="pickup_ready_text" maxlength="160" value="' + esc(s.pickup_ready_text) + '" placeholder="e.g. Ready in about 2 hours · Ready today by 4 PM"></label>' +
+        '<label>How long does shipping take? (shown at checkout and in emails)<input name="shipping_time_text" maxlength="160" value="' + esc(s.shipping_time_text) + '" placeholder="e.g. Ships in 1–2 business days, arrives in 3–5"></label>' +
+        '<label>Hold unpaid pickup orders for (days)<input name="pickup_hold_days" inputmode="numeric" value="' + esc(s.pickup_hold_days) + '"></label>' +
+        '<h2 style="margin-top:8px">Sale</h2>' +
+        (r.saleActive ? '<p><span class="badge b-ok">Live now</span> ' + esc(r.saleActive.label) + '</p>' : '') +
+        '<label class="check"><input type="checkbox" name="sale_enabled"' + (s.sale_enabled === '1' ? ' checked' : '') + '> Sale is on</label>' +
+        '<div class="grid g2"><label>Percent off<input name="sale_percent" inputmode="numeric" value="' + esc(s.sale_percent) + '" placeholder="e.g. 50"></label>' +
+        '<label>Applies to<select name="sale_category_id"><option value="">Everything in the store</option>' + r.categories.map(function (c) { return '<option value="' + c.id + '"' + (String(c.id) === String(s.sale_category_id) ? ' selected' : '') + '>' + esc(c.name) + ' only</option>'; }).join('') + '</select></label></div>' +
+        '<div class="grid g2"><label>Banner text<input name="sale_label" maxlength="140" value="' + esc(s.sale_label) + '" placeholder="e.g. Black Friday — 50% off everything"></label>' +
+        '<label>Last day of the sale (optional)<input name="sale_ends" type="date" value="' + esc(s.sale_ends) + '"></label></div>' +
+        '<p class="muted small">Sale prices show crossed out on the website and are charged at checkout. The sale ends by itself after the last day.</p>' +
+        '<h2 style="margin-top:8px">Website text</h2>' +
+        '<label>Announcement bar (top of the shop; leave empty to hide)<input name="site_announcement" maxlength="140" value="' + esc(s.site_announcement) + '" placeholder="e.g. New Demon Slayer plush just arrived!"></label>' +
+        '<label>Rolling banner words (one per line)<textarea name="marquee_items" rows="5">' + esc(jsonList(s.marquee_items).join('\n')) + '</textarea></label>' +
+        '<label>Store address (shown in Visit Us)<textarea name="store_address" rows="3">' + esc(s.store_address) + '</textarea></label>' +
+        '<p class="muted small" style="margin-bottom:4px">Store hours</p><table class="vtable"><tbody id="hb"></tbody></table><button type="button" class="btn small" id="addH">+ Add hours row</button>' +
         '<h2 style="margin-top:8px">Store contact</h2><div class="grid g2"><label>Email for new-order alerts<input name="store_email" type="email" value="' + esc(s.store_email) + '"></label><label>Store phone<input name="store_phone" value="' + esc(s.store_phone) + '"></label></div>' +
         '<label>Hold items in a shopper\'s checkout for (minutes)<input name="hold_minutes" inputmode="numeric" value="' + esc(s.hold_minutes) + '"></label>' +
         '<p class="muted small">Email sending: ' + (r.email.configured ? '<span class="badge b-ok">on</span> from ' + esc(r.email.from) : '<span class="badge b-warn">not set up</span> — emails are saved in Emails so nothing is lost') + '</p>' +
@@ -423,13 +539,23 @@
       (tiers.length ? tiers : [{ min_cents: 0, rate_cents: '' }]).forEach(trow);
       $('#addT').onclick = function () { trow({ min_cents: '', rate_cents: '' }); };
       tb.onclick = function (e) { if (e.target.closest('[data-rm]')) e.target.closest('tr').remove(); };
+      var hb = $('#hb');
+      function hrow(h) { var tr = document.createElement('tr'); tr.innerHTML = '<td><input name="hday" placeholder="Days" value="' + esc(h[0] || '') + '"></td><td><input name="htime" placeholder="Hours" value="' + esc(h[1] || '') + '"></td><td><button type="button" class="btn small" data-rm>✕</button></td>'; hb.appendChild(tr); }
+      (jsonList(s.store_hours).length ? jsonList(s.store_hours) : [['', '']]).forEach(hrow);
+      $('#addH').onclick = function () { hrow(['', '']); };
+      hb.onclick = function (e) { if (e.target.closest('[data-rm]')) e.target.closest('tr').remove(); };
       function mode() { $('#tiers').hidden = $('[name=shipping_mode]').value !== 'tiers'; } $('[name=shipping_mode]').onchange = mode; mode();
       $('#sf').onsubmit = function (e) {
         e.preventDefault(); var f = e.target;
-        act(f.querySelector('.big'), api('/admin/settings', { method: 'PUT', body: {
+        var body = {
           pickup_enabled: f.pickup_enabled.checked, pickup_instructions: f.pickup_instructions.value, shipping_enabled: f.shipping_enabled.checked, shipping_mode: f.shipping_mode.value,
           shipping_flat_cents: f.shipping_flat_cents.value, shipping_free_over_cents: f.shipping_free_over_cents.value, shipping_note: f.shipping_note.value, store_email: f.store_email.value, store_phone: f.store_phone.value, hold_minutes: f.hold_minutes.value,
-          shipping_tiers: $$('tr', tb).filter(function (tr) { return $('[name=trate]', tr).value !== ''; }).map(function (tr) { return { min: $('[name=tmin]', tr).value || '0', rate: $('[name=trate]', tr).value }; }) } }), 'Settings saved');
+          shipping_tiers: $$('tr', tb).filter(function (tr) { return $('[name=trate]', tr).value !== ''; }).map(function (tr) { return { min: $('[name=tmin]', tr).value || '0', rate: $('[name=trate]', tr).value }; }),
+          pay_in_store_enabled: f.pay_in_store_enabled.checked, pickup_ready_text: f.pickup_ready_text.value, shipping_time_text: f.shipping_time_text.value, pickup_hold_days: f.pickup_hold_days.value,
+          sale_enabled: f.sale_enabled.checked, sale_percent: f.sale_percent.value, sale_category_id: f.sale_category_id.value, sale_label: f.sale_label.value, sale_ends: f.sale_ends.value,
+          site_announcement: f.site_announcement.value, marquee_items: f.marquee_items.value.split('\n'), store_address: f.store_address.value,
+          store_hours: $$('tr', hb).map(function (tr) { return [$('[name=hday]', tr).value, $('[name=htime]', tr).value]; }) };
+        checkedSave(f.querySelector('.big'), 'settings', body, function () { return api('/admin/settings', { method: 'PUT', body: body }); }).then(function (x) { if (x) { toast('Settings saved'); viewSettings(); } });
       };
       $('#pw').onsubmit = function (e) { e.preventDefault(); act(e.target.querySelector('button'), api('/admin/password', { method: 'POST', body: { current: e.target.current.value, password: e.target.password.value } }), 'Password changed').then(function () { e.target.reset(); }); };
       if ($('#conn')) $('#conn').onclick = function () { act($('#conn'), api('/admin/square/connect')).then(function (x) { location.href = x.url; }); };
@@ -451,7 +577,7 @@
   function permBoxes(selected, full) {
     return '<label class="check"><input type="radio" name="mode" value="full"' + (full ? ' checked' : '') + (me.role === 'owner' ? '' : ' disabled') + '> <b>Full access — same as ' + (me.role === 'owner' ? 'me' : 'an owner') + '</b></label>' +
       '<label class="check"><input type="radio" name="mode" value="custom"' + (full ? '' : ' checked') + '> <b>Choose what they can do:</b></label><div class="grid" style="padding-left:24px">' +
-      Object.keys(PL).map(function (k) { return '<label class="check"><input type="checkbox" name="perm" value="' + k + '"' + (selected.indexOf(k) >= 0 ? ' checked' : '') + ((k === 'staff' && me.role !== 'owner') ? ' disabled' : '') + '> ' + esc(PL[k]) + '</label>'; }).join('') + '</div>';
+      Object.keys(PL).map(function (k) { return '<label class="check"><input type="checkbox" name="perm" value="' + k + '"' + (selected.indexOf(k) >= 0 ? ' checked' : '') + (((k === 'staff' || k === 'ai') && me.role !== 'owner') ? ' disabled' : '') + '> ' + esc(PL[k]) + '</label>'; }).join('') + '</div>';
   }
   function readPerms(root) { return { full: $('input[name=mode]:checked', root).value === 'full', perms: $$('input[name=perm]:checked', root).map(function (x) { return x.value; }) }; }
   function shareLink(link, name) {

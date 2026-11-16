@@ -97,3 +97,27 @@ table.simple td,table.simple th{padding:8px 6px;border-bottom:1px solid var(--li
 .item.cat{grid-template-columns:1fr}
 .item.cat>span:first-child{display:flex;gap:10px;align-items:center}
 .item.cat input{max-width:320px}
+
+/* ---------- AI assistant ---------- */
+.ai-fab{position:fixed;right:16px;bottom:86px;z-index:35;border:1px solid rgba(255,255,255,.5);background:#fff;color:#140f20;font:inherit;font-weight:700;padding:11px 16px;border-radius:999px;box-shadow:0 0 18px var(--glow),0 0 34px var(--lav);cursor:pointer}
+@media (min-width:900px){.ai-fab{bottom:20px}}
+.ai-fab[hidden],.ai-panel[hidden]{display:none}
+.ai-panel{position:fixed;z-index:45;right:0;top:0;bottom:0;width:min(420px,100vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid rgba(225,212,255,.3);box-shadow:-10px 0 40px rgba(0,0,0,.5)}
+.ai-head{display:flex;align-items:center;gap:8px;padding:14px 14px;border-bottom:1px solid var(--line)}.ai-head b{flex:1}
+.ai-x{background:none;border:0;color:var(--ink);font-size:26px;line-height:1;cursor:pointer}
+.ai-log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.ai-msg{max-width:92%;padding:10px 12px;border-radius:14px;white-space:pre-wrap;line-height:1.45;font-size:14.5px}
+.ai-msg.u{align-self:flex-end;background:#fff;color:#140f20;border-bottom-right-radius:4px}
+.ai-msg.a{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
+.ai-msg.sys{align-self:center;font-size:12.5px;color:var(--mut);background:none;padding:2px}
+.ai-props{border:1px solid rgba(225,212,255,.35);border-radius:14px;padding:12px;background:rgba(185,162,255,.06)}
+.ai-props h4{margin:0 0 8px;font-size:14px}
+.ai-props ol{margin:0 0 10px 18px;padding:0;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.ai-props .risk{display:block;color:var(--warn);font-size:12.5px}
+.ai-props label.check{font-size:13.5px;color:var(--warn)}
+.ai-in{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+.ai-in textarea{flex:1;resize:none;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:10px;font:inherit;font-size:15px}
+.ai-typing{align-self:flex-start;color:var(--mut);font-size:13px}
+.issues{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:10px}
+.issues li{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2)}
+.issues li.error{border-color:rgba(255,122,138,.55)}.issues li.warn{border-color:rgba(255,207,107,.45)}

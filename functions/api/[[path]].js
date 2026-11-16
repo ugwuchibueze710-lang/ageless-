@@ -1,8 +1,9 @@
 // Ageless API router (Cloudflare Pages Function, handles every /api/* request).
 import { json, fail, HttpError, readJson, str, text, int, isEmail, isPhone, isZip, US_STATES, slugify, dollarsToCents, clientIp,
   code as makeCode, token as makeToken, sha256Hex, timingSafeEqual, nowIso, money, limitOr429, log, siteUrl } from '../_lib/util.js';
-import { ensureSchema, getSettings, setSetting } from '../_lib/db.js';
-import { hashPassword, verifyPassword, passwordProblem, createSession, clearCookie, destroySession, requireStaff, PERMS, permsOf, cleanPerms } from '../_lib/auth.js';
+import { ensureSchema, getSettings, setSetting, salePercent, salePrice } from '../_lib/db.js';
+import { hashPassword, verifyPassword, passwordProblem, createSession, clearCookie, destroySession, requireStaff, PERMS, permsOf, cleanPerms, OWNER_ONLY_PERMS } from '../_lib/auth.js';
+import { aiChat, aiReview, ruleCheck, aiConfigured, allowedPath, riskOf } from '../_lib/ai.js';
 import * as sq from '../_lib/square.js';
 import { notify } from '../_lib/email.js';
 import { cleanupExpired, availability, publicCatalog, placeHolds, event, loadOrder, markPaid, raiseAlert, orderLink, assertTransition, imgUrl } from '../_lib/store.js';
@@ -25,7 +26,7 @@ export async function onRequest(ctx) {
         const st = request.__staff;
         if (st && res.status < 400 && (request.method !== 'GET' || /^\/admin\/orders\/\d+$/.test(path))) {
           const what = describe(request.method, path);
-          if (what) await activity(env, st, what, null, request, path);
+          if (what) await activity(env, st, what + (request.headers.get('X-Ageless-Via') === 'assistant' ? ' (via AI assistant)' : ''), null, request, path);
         }
         return res;
       }
@@ -78,6 +79,10 @@ const DESCRIBE = [
   ['DELETE', /^\/admin\/invites\/\d+$/, () => 'Canceled an invite link'],
   ['POST', /^\/admin\/password$/, () => 'Changed own password'],
   ['POST', /^\/admin\/alerts\/\d+\/resolve$/, () => 'Cleared an alert'],
+  ['POST', /^\/admin\/orders\/(\d+)\/paid-in-store$/, (m) => `Marked order #${m[1]} paid at the store`],
+  ['POST', /^\/admin\/orders\/(\d+)\/cancel-unpaid$/, (m) => `Canceled unpaid pickup order #${m[1]}`],
+  ['POST', /^\/admin\/orders\/(\d+)\/items\/\d+\/remove$/, (m) => `Removed an item from order #${m[1]}`],
+  ['POST', /^\/admin\/ai\/chat$/, () => 'Asked the AI assistant'],
 ];
 function describe(method, path) {
   for (const [m, re, fn] of DESCRIBE) { if (m !== method) continue; const x = path.match(re); if (x) return fn(x); }
@@ -93,9 +98,12 @@ on('GET', '/config', async ({ env }) => {
   return json({
     paymentsEnabled: connected,
     square: connected ? { appId: env.SQUARE_APP_ID, locationId: s.sq_location_id, env: sq.squareEnv(env) } : null,
-    shipping: { enabled: s.shipping_enabled === '1' && shippingConfigured(s), note: s.shipping_note, freeOverCents: s.shipping_free_over_cents ? Number(s.shipping_free_over_cents) : null },
-    pickup: { enabled: s.pickup_enabled === '1', instructions: s.pickup_instructions },
-    store: { phone: s.store_phone || null },
+    shipping: { enabled: shippingOn(s, connected), note: s.shipping_note, time: s.shipping_time_text, freeOverCents: s.shipping_free_over_cents ? Number(s.shipping_free_over_cents) : null },
+    pickup: { enabled: s.pickup_enabled === '1', instructions: s.pickup_instructions, ready: s.pickup_ready_text, holdDays: Number(s.pickup_hold_days) || 3 },
+    payInStore: payInStoreOn(s, connected),
+    store: { phone: s.store_phone || null, address: s.store_address || '', hours: safeJson(s.store_hours, []) },
+    site: { announcement: s.site_announcement || '', marquee: safeJson(s.marquee_items, []) },
+    sale: saleInfo(s),
   });
 });
 
@@ -115,7 +123,16 @@ on('GET', '/img/:id', async ({ env, params }) => {
   return new Response(new Uint8Array(r.data), { headers: { 'Content-Type': r.mime || 'image/jpeg', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' } });
 });
 
-// ---------- shipping ----------
+// ---------- shipping / payment options ----------
+function safeJson(v, d) { try { const x = JSON.parse(v || ''); return x ?? d; } catch { return d; } }
+// Shipping needs online payment, so it only appears once Square is connected.
+function shippingOn(s, connected) { return connected && s.shipping_enabled === '1' && shippingConfigured(s); }
+// Without Square, pay-at-pickup is the only way to order, so it is always on then.
+function payInStoreOn(s, connected) { return s.pickup_enabled === '1' && (!connected || s.pay_in_store_enabled === '1'); }
+function saleInfo(s) {
+  const pct = salePercent(s, s.sale_category_id || null);
+  return pct ? { percent: pct, label: s.sale_label || `${pct}% off`, categoryId: s.sale_category_id ? Number(s.sale_category_id) : null, ends: s.sale_ends || null } : null;
+}
 function shippingConfigured(s) {
   if (s.shipping_mode === 'tiers') { try { return JSON.parse(s.shipping_tiers || '[]').length > 0; } catch { return false; } }
   return s.shipping_flat_cents !== '' && s.shipping_flat_cents != null;
@@ -130,13 +147,14 @@ function shippingFor(s, subtotal) {
 }
 
 // ---------- checkout ----------
-async function cartLines(env, items) {
+async function cartLines(env, items, S) {
+  S = S || await getSettings(env);
   if (!Array.isArray(items) || !items.length) fail(400, 'Your cart is empty.');
   if (items.length > 50) fail(400, 'Too many items.');
   const want = {};
   for (const it of items) { const id = int(it.variation_id, 1), q = int(it.qty, 1, 99); if (!id || !q) fail(400, 'Invalid cart item.'); want[id] = (want[id] || 0) + q; }
   const ids = Object.keys(want).map(Number), qm = ids.map(() => '?').join(',');
-  const rows = (await env.DB.prepare(`SELECT v.id AS variation_id, v.name AS variation_name, v.sku, v.price_cents, v.stock, v.square_variation_id, p.id AS product_id, p.name, p.status,
+  const rows = (await env.DB.prepare(`SELECT v.id AS variation_id, v.name AS variation_name, v.sku, v.price_cents, v.stock, v.square_variation_id, p.id AS product_id, p.name, p.status, p.category_id,
       (SELECT COALESCE(url, '/api/img/' || id) FROM product_images i WHERE i.product_id = p.id ORDER BY sort, id LIMIT 1) AS image_url
     FROM variations v JOIN products p ON p.id = v.product_id WHERE v.id IN (${qm})`).bind(...ids).all()).results;
   const byId = Object.fromEntries(rows.map((r) => [r.variation_id, r]));
@@ -148,7 +166,8 @@ async function cartLines(env, items) {
     const a = avail[id];
     if (a == null) problems.push({ variation_id: id, name: r.name, reason: 'Not available online yet — the store has not set a quantity.' });
     else if (a < want[id]) problems.push({ variation_id: id, name: r.name, available: a, reason: a === 0 ? 'Out of stock.' : `Only ${a} left.` });
-    lines.push({ ...r, qty: want[id], unit_cents: r.price_cents });
+    const pct = salePercent(S, r.category_id);
+    lines.push({ ...r, qty: want[id], unit_cents: salePrice(r.price_cents, pct), list_cents: pct ? r.price_cents : null });
   }
   return { lines, problems, subtotal: lines.reduce((t, l) => t + l.unit_cents * l.qty, 0) };
 }
@@ -174,12 +193,14 @@ on('POST', '/checkout/quote', async ({ env, request }) => {
   await cleanupExpired(env);
   const b = await readJson(request);
   const s = await getSettings(env);
-  const { lines, problems, subtotal } = await cartLines(env, b.items);
+  const { lines, problems, subtotal } = await cartLines(env, b.items, s);
   const fulfillment = b.fulfillment === 'shipping' ? 'shipping' : 'pickup';
-  if (fulfillment === 'shipping' && !(s.shipping_enabled === '1' && shippingConfigured(s))) problems.push({ reason: 'Shipping is not available yet — please choose in-store pickup.' });
+  const connected = await sq.isConnected(env);
+  if (fulfillment === 'shipping' && !shippingOn(s, connected)) problems.push({ reason: 'Shipping is not available yet — please choose in-store pickup.' });
   if (fulfillment === 'pickup' && s.pickup_enabled !== '1') problems.push({ reason: 'In-store pickup is not available right now.' });
   const shipping = fulfillment === 'shipping' && shippingConfigured(s) ? shippingFor(s, subtotal) : 0;
-  return json({ subtotal_cents: subtotal, shipping_cents: shipping, tax_note: 'Sales tax, if any, is calculated by Square at payment.', problems,
+  const saved = lines.reduce((t, l) => t + (l.list_cents ? (l.list_cents - l.unit_cents) * l.qty : 0), 0);
+  return json({ subtotal_cents: subtotal, saved_cents: saved, shipping_cents: shipping, tax_note: 'Sales tax, if any, is calculated by Square at payment.', problems,
     lines: lines.map((l) => ({ variation_id: l.variation_id, name: l.name, qty: l.qty, unit_cents: l.unit_cents })) });
 });
 
@@ -190,23 +211,13 @@ on('POST', '/checkout/start', async ({ env, request }) => {
   const b = await readJson(request);
   const s = await getSettings(env);
   const cust = readCustomer(b);
-  if (cust.fulfillment === 'shipping' && !(s.shipping_enabled === '1' && shippingConfigured(s))) fail(400, 'Shipping is not available yet — please choose in-store pickup.');
+  if (cust.fulfillment === 'shipping' && !shippingOn(s, true)) fail(400, 'Shipping is not available yet — please choose in-store pickup.');
   if (cust.fulfillment === 'pickup' && s.pickup_enabled !== '1') fail(400, 'In-store pickup is not available right now.');
-  const { lines, problems, subtotal } = await cartLines(env, b.items);
+  const { lines, problems, subtotal } = await cartLines(env, b.items, s);
   if (problems.length) fail(409, problems[0].reason, { problems });
   const shipping = cust.fulfillment === 'shipping' ? shippingFor(s, subtotal) : 0;
-  const access = makeToken(24), now = nowIso();
-  let o;
-  for (let tries = 0; tries < 5 && !o; tries++) {
-    try {
-      o = await env.DB.prepare(`INSERT INTO orders (code, access_hash, status, fulfillment, name, email, phone, ship_street, ship_street2, ship_city, ship_state, ship_zip, notes,
-        subtotal_cents, shipping_cents, tax_cents, total_cents, created_at, updated_at) VALUES (?, ?, 'pending_payment', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?) RETURNING *`)
-        .bind('AG-' + makeCode(6), await sha256Hex(access), cust.fulfillment, cust.name, cust.email, cust.phone, cust.ship_street || null, cust.ship_street2 || null,
-          cust.ship_city || null, cust.ship_state || null, cust.ship_zip || null, cust.notes || null, subtotal, shipping, subtotal + shipping, now, now).first();
-    } catch (e) { if (!String(e).includes('UNIQUE')) throw e; }
-  }
-  await env.DB.batch(lines.map((l) => env.DB.prepare(`INSERT INTO order_items (order_id, product_id, variation_id, name, variation_name, sku, image_url, unit_cents, qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(o.id, l.product_id, l.variation_id, l.name, l.variation_name, l.sku, l.image_url, l.unit_cents, l.qty)));
+  const { o, access } = await createOrderRow(env, cust, lines, subtotal, shipping, 'pending_payment', 'card');
+  await insertItems(env, o.id, lines);
   const minutes = int(s.hold_minutes, 5, 30) || 10;
   const held = await placeHolds(env, o.id, lines, minutes);
   if (held.failed.length) {
@@ -223,9 +234,71 @@ on('POST', '/checkout/start', async ({ env, request }) => {
   return json({ code: o.code, token: access, subtotal_cents: subtotal, shipping_cents: shipping, tax_cents: tax, total_cents: subtotal + shipping + tax, hold_expires_at: held.expiresAt });
 });
 
+async function createOrderRow(env, cust, lines, subtotal, shipping, status, method) {
+  const access = makeToken(24), now = nowIso();
+  const discount = lines.reduce((t, l) => t + (l.list_cents ? (l.list_cents - l.unit_cents) * l.qty : 0), 0);
+  let o;
+  for (let tries = 0; tries < 5 && !o; tries++) {
+    try {
+      o = await env.DB.prepare(`INSERT INTO orders (code, access_hash, status, fulfillment, name, email, phone, ship_street, ship_street2, ship_city, ship_state, ship_zip, notes,
+        subtotal_cents, shipping_cents, tax_cents, total_cents, created_at, updated_at, payment_method, discount_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?) RETURNING *`)
+        .bind('AG-' + makeCode(6), await sha256Hex(access), status, cust.fulfillment, cust.name, cust.email, cust.phone, cust.ship_street || null, cust.ship_street2 || null,
+          cust.ship_city || null, cust.ship_state || null, cust.ship_zip || null, cust.notes || null, subtotal, shipping, subtotal + shipping, now, now, method, discount).first();
+    } catch (e) { if (!String(e).includes('UNIQUE')) throw e; }
+  }
+  if (!o) fail(500, 'Could not create the order. Please try again.');
+  await insertItems(env, o.id, lines);
+  return { o, access };
+}
+async function insertItems(env, orderId, lines) {
+  await env.DB.batch(lines.map((l) => env.DB.prepare(`INSERT INTO order_items (order_id, product_id, variation_id, name, variation_name, sku, image_url, unit_cents, qty, list_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(orderId, l.product_id, l.variation_id, l.name, l.variation_name, l.sku, l.image_url, l.unit_cents, l.qty, l.list_cents || null)));
+}
+
+// Pay at pickup: no card. Items come off the shelf count right away (atomic, no overselling);
+// the buyer pays at the counter. Staff mark it paid, or cancel a no-show (stock goes back).
+on('POST', '/checkout/reserve', async ({ env, request }) => {
+  await limitOr429(env, request, 'reserve', 8, 600);
+  await cleanupExpired(env);
+  const b = await readJson(request);
+  const s = await getSettings(env);
+  const connected = await sq.isConnected(env);
+  const cust = readCustomer({ ...b, fulfillment: 'pickup' });
+  if (!payInStoreOn(s, connected)) fail(400, 'Paying at pickup is not available right now. Please pay online.');
+  const { lines, problems, subtotal } = await cartLines(env, b.items, s);
+  if (problems.length) fail(409, problems[0].reason, { problems });
+  const { o, access } = await createOrderRow(env, cust, lines, subtotal, 0, 'pending_payment', 'store');
+  const held = await placeHolds(env, o.id, lines, 5);
+  if (held.failed.length) {
+    await env.DB.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?").bind(nowIso(), o.id).run();
+    const names = lines.filter((l) => held.failed.includes(l.variation_id)).map((l) => l.name);
+    fail(409, `Sorry — ${names.join(', ')} just sold out. Please update your cart.`, { problems: held.failed.map((id) => ({ variation_id: id, reason: 'Just sold out.' })) });
+  }
+  const now = nowIso();
+  await env.DB.batch([
+    ...lines.map((l) => env.DB.prepare('UPDATE variations SET stock = CASE WHEN stock IS NULL THEN NULL ELSE stock - ? END WHERE id = ?').bind(l.qty, l.variation_id)),
+    env.DB.prepare('DELETE FROM stock_holds WHERE order_id = ?').bind(o.id),
+    env.DB.prepare("UPDATE orders SET status = 'processing', payment_status = 'PAY_AT_PICKUP', updated_at = ? WHERE id = ?").bind(now, o.id),
+    env.DB.prepare("INSERT INTO order_events (order_id, actor, action, detail, at) VALUES (?, 'customer', 'reserved', 'Pickup order placed — customer pays at the store', ?)").bind(o.id, now),
+  ]);
+  const fresh = await loadOrder(env, 'id', o.id), site = siteUrl(request, env);
+  await notify(env, 'store_new_order', fresh, fresh.items, { link: `${site}/admin/#/orders/${o.id}`, linkText: 'Open in admin' });
+  await notify(env, 'customer_confirmation', fresh, fresh.items, { link: await customerLink(env, site, o.code), linkText: 'View your order' });
+  return json({ code: o.code, token: access, status: 'reserved' });
+});
+
+// Email links use a key derived from the order code and the server secret, so any later email can link to the order page.
+async function linkToken(env, code) {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('order-link:' + (env.TOKEN_KEY || '')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(code)));
+  return btoa(String.fromCharCode(...sig)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 32);
+}
+async function customerLink(env, site, code) { return orderLink(site, code, await linkToken(env, code)); }
 async function orderByToken(env, codeParam, tok) {
   const o = await loadOrder(env, 'code', str(codeParam, 20));
-  if (!o || !tok || !timingSafeEqual(o.access_hash, await sha256Hex(String(tok)))) fail(404, 'Order not found.');
+  if (!o || !tok) fail(404, 'Order not found.');
+  const t = String(tok);
+  if (!timingSafeEqual(o.access_hash, await sha256Hex(t)) && !(env.TOKEN_KEY && timingSafeEqual(await linkToken(env, o.code), t))) fail(404, 'Order not found.');
   return o;
 }
 
@@ -274,7 +347,7 @@ async function afterPaid(env, request, orderId) {
   const o = await loadOrder(env, 'id', orderId);
   const site = siteUrl(request, env);
   await notify(env, 'store_new_order', o, o.items, { link: `${site}/admin/#/orders/${o.id}`, linkText: 'Open in admin' });
-  await notify(env, 'customer_confirmation', o, o.items, { link: orderLink(site, o.code), linkText: 'View your order' });
+  await notify(env, 'customer_confirmation', o, o.items, { link: await customerLink(env, site, o.code), linkText: 'View your order' });
 }
 
 on('GET', '/orders/:code', async ({ env, params, url, request }) => {
@@ -283,11 +356,12 @@ on('GET', '/orders/:code', async ({ env, params, url, request }) => {
   const s = await getSettings(env);
   return json({ order: {
     code: o.code, status: o.status, fulfillment: o.fulfillment, name: o.name, created_at: o.created_at, paid_at: o.paid_at,
+    pay_at_pickup: o.payment_method === 'store', discount_cents: o.discount_cents, ready_text: o.fulfillment === 'pickup' ? s.pickup_ready_text : s.shipping_time_text, hold_days: Number(s.pickup_hold_days) || 3,
     subtotal_cents: o.subtotal_cents, shipping_cents: o.shipping_cents, tax_cents: o.tax_cents, total_cents: o.total_cents, refunded_cents: o.refunded_cents,
     tracking_carrier: o.tracking_carrier, tracking_number: o.tracking_number, card: o.card_last4 ? `${o.card_brand || 'Card'} ending ${o.card_last4}` : null,
     address: o.fulfillment === 'shipping' ? { street: o.ship_street, street2: o.ship_street2, city: o.ship_city, state: o.ship_state, zip: o.ship_zip } : null,
     pickup_instructions: o.fulfillment === 'pickup' ? s.pickup_instructions : null,
-    items: o.items.map((i) => ({ name: i.name, variation_name: i.variation_name, qty: i.qty, unit_cents: i.unit_cents, image_url: i.image_url, status: i.status, original_name: i.original_name })),
+    items: o.items.map((i) => ({ name: i.name, variation_name: i.variation_name, qty: i.qty, unit_cents: i.unit_cents, list_cents: i.list_cents, image_url: i.image_url, status: i.status, original_name: i.original_name })),
   } });
 });
 
@@ -302,7 +376,8 @@ on('GET', '/sub/:token', async ({ env, params }) => {
   const o = await loadOrder(env, 'id', s.order_id);
   const it = o.items.find((i) => i.id === s.order_item_id);
   return json({ status: s.status, order_code: o.code, original: { name: it.original_name || it.name, image_url: it.image_url, qty: it.qty },
-    offered: { name: s.new_name, image_url: s.new_image_url, unit_cents: s.unit_cents }, refund_cents: it.unit_cents * it.qty, message: s.message });
+    offered: { name: s.new_name, image_url: s.new_image_url, unit_cents: s.unit_cents }, refund_cents: it.unit_cents * it.qty, message: s.message,
+    pay_at_pickup: o.payment_method === 'store' && !o.paid_at });
 });
 on('POST', '/sub/:token', async ({ env, params, request }) => {
   await limitOr429(env, request, 'sub', 20, 600);
@@ -353,7 +428,8 @@ function itemRefundAmount(o, it) {
 }
 
 async function doRefund(env, o, amount, reason, actor, itemIds) {
-  if (!o.square_payment_id) fail(400, 'This order has no Square payment to refund.');
+  if (o.payment_method === 'store' && !o.paid_at) return removeUnpaidItems(env, o, reason, actor, itemIds);
+  if (!o.square_payment_id) fail(400, o.payment_method === 'store' ? 'This order was paid at the store. Give the refund at the counter, then add a note here.' : 'This order has no Square payment to refund.');
   if (amount <= 0 || amount > o.total_cents - o.refunded_cents) fail(400, `Refund must be between $0.01 and ${money(o.total_cents - o.refunded_cents)}.`);
   const r = await sq.refund(env, o.square_payment_id, amount, reason);
   const now = nowIso(), newRef = o.refunded_cents + amount, full = newRef >= o.total_cents;
@@ -505,6 +581,7 @@ on('POST', '/admin/staff', async ({ env, request }) => {
   const email = str(b.email, 120).toLowerCase(), name = str(b.name, 60), role = b.role === 'owner' ? 'owner' : 'employee';
   if (!isEmail(email) || name.length < 2) fail(400, 'Enter a name and valid email.');
   if (role === 'owner' && request.__staff.role !== 'owner') fail(403, 'Only an owner can add an owner.');
+  if (cleanPerms(b.perms).some((p) => OWNER_ONLY_PERMS.includes(p)) && request.__staff.role !== 'owner') fail(403, 'Only an owner can give staff-management or AI assistant access.');
   const pp = passwordProblem(b.password); if (pp) fail(400, pp);
   try { await env.DB.prepare('INSERT INTO staff (email, name, role, perms, pass_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(email, name, role, JSON.stringify(cleanPerms(b.perms || ['orders', 'products', 'stock'])), await hashPassword(b.password), nowIso()).run(); }
   catch (e) { if (String(e).includes('UNIQUE')) fail(409, 'That email already has an account.'); throw e; }
@@ -514,7 +591,7 @@ on('PUT', '/admin/staff/:id', async ({ env, request, params }) => {
   const me = await requireStaff(env, request, 'staff'); const b = await readJson(request); const id = int(params.id, 1);
   if (id === me.id && (b.active === false || b.role === 'employee' || Array.isArray(b.perms))) fail(400, 'You cannot change your own access.');
   const target = await env.DB.prepare('SELECT role FROM staff WHERE id = ?').bind(id).first(); if (!target) fail(404, 'Staff member not found');
-  if (me.role !== 'owner' && (target.role === 'owner' || b.role || (Array.isArray(b.perms) && b.perms.includes('staff')))) fail(403, 'Only an owner can change owners, roles or staff permission.');
+  if (me.role !== 'owner' && (target.role === 'owner' || b.role || (Array.isArray(b.perms) && b.perms.some((p) => OWNER_ONLY_PERMS.includes(p))))) fail(403, 'Only an owner can change owners, roles, staff permission or AI assistant access.');
   const sets = [], vals = [];
   if (b.role) { sets.push('role = ?'); vals.push(b.role === 'owner' ? 'owner' : 'employee'); }
   if (Array.isArray(b.perms)) { sets.push('perms = ?'); vals.push(JSON.stringify(cleanPerms(b.perms))); }
@@ -533,7 +610,7 @@ on('POST', '/admin/invites', async ({ env, request }) => {
   if (full && me.role !== 'owner') fail(403, 'Only an owner can invite someone with full access.');
   const perms = full ? Object.keys(PERMS) : cleanPerms(b.perms);
   if (!perms.length) fail(400, 'Pick at least one permission.');
-  if (!full && perms.includes('staff') && me.role !== 'owner') fail(403, 'Only an owner can give staff-management permission.');
+  if (!full && perms.some((p) => OWNER_ONLY_PERMS.includes(p)) && me.role !== 'owner') fail(403, 'Only an owner can give staff-management or AI assistant access.');
   const days = int(b.days, 1, 30) || 7, tok = makeToken(24), now = nowIso();
   const email = str(b.email, 120).toLowerCase(); if (email && !isEmail(email)) fail(400, 'That email is not valid.');
   await env.DB.prepare('INSERT INTO invites (token_hash, name, email, role, perms, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -593,6 +670,85 @@ on('GET', '/admin/activity', async ({ env, request, url }) => {
 
 // ======================================================================
 // ADMIN — dashboard
+// Pay-at-pickup order not paid yet: nothing to refund, the item is simply taken off what they owe.
+async function removeUnpaidItems(env, o, reason, actor, itemIds) {
+  const ids = (itemIds || []).length ? itemIds : o.items.filter((i) => !['refunded', 'canceled'].includes(i.status)).map((i) => i.id);
+  const drop = o.items.filter((i) => ids.includes(i.id)), cut = drop.reduce((t, i) => t + i.unit_cents * i.qty, 0), now = nowIso();
+  const stmts = drop.map((i) => env.DB.prepare("UPDATE order_items SET status = 'canceled' WHERE id = ?").bind(i.id));
+  stmts.push(env.DB.prepare('UPDATE orders SET subtotal_cents = subtotal_cents - ?, total_cents = total_cents - ?, updated_at = ? WHERE id = ?').bind(cut, cut, now, o.id));
+  stmts.push(env.DB.prepare('INSERT INTO order_events (order_id, actor, action, detail, at) VALUES (?, ?, ?, ?, ?)').bind(o.id, actor, 'item_removed', `${drop.map((i) => i.name).join(', ')} removed — ${reason}. Customer had not paid, nothing to refund.`, now));
+  await env.DB.batch(stmts);
+  const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM order_items WHERE order_id = ? AND status NOT IN ('refunded','canceled')").bind(o.id).first();
+  if (!left.n) await env.DB.prepare("UPDATE orders SET status = 'canceled', updated_at = ? WHERE id = ?").bind(now, o.id).run();
+  else if (o.status === 'awaiting_approval') {
+    const pend = await env.DB.prepare("SELECT COUNT(*) AS n FROM order_items WHERE order_id = ? AND status IN ('awaiting_approval','unavailable')").bind(o.id).first();
+    if (!pend.n) await env.DB.prepare("UPDATE orders SET status = 'processing', updated_at = ? WHERE id = ?").bind(now, o.id).run();
+  }
+  return { id: 'none', status: 'NOT_CHARGED' };
+}
+
+// ======================================================================
+// ADMIN — contradiction check + AI assistant
+// ======================================================================
+// Runs another admin API call internally, as the same signed-in person (same permission checks, same activity log).
+async function internalCall(ctx, method, path, body) {
+  const src = ctx.request;
+  const h = new Headers({ 'X-Ageless-Admin': '1', 'X-Ageless-Via': 'assistant', 'Content-Type': 'application/json' });
+  for (const k of ['Cookie', 'CF-Connecting-IP', 'User-Agent']) if (src.headers.get(k)) h.set(k, src.headers.get(k));
+  const req = new Request(new URL('/api' + path, src.url), { method, headers: h, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body || {}) });
+  const res = await onRequest({ ...ctx, request: req });
+  return { status: res.status, data: await res.json().catch(() => ({})) };
+}
+on('POST', '/admin/check', async ({ env, request }) => {
+  const me = await requireStaff(env, request); const b = await readJson(request);
+  const kind = b.kind === 'product' ? 'product' : 'settings', data = b.data && typeof b.data === 'object' ? b.data : {};
+  const s = await getSettings(env);
+  const categories = (await env.DB.prepare('SELECT id, name FROM categories ORDER BY sort').all()).results;
+  const ctx = { settings: s, categories, squareConnected: await sq.isConnected(env) };
+  if (kind === 'product') {
+    const pid = int(b.productId, 1);
+    ctx.hasPhoto = pid ? !!(await env.DB.prepare('SELECT id FROM product_images WHERE product_id = ? LIMIT 1').bind(pid).first()) : !!b.hasPhoto;
+    ctx.salePct = salePercent(s, data.category_id || null); ctx.saleApplies = !!ctx.salePct;
+  }
+  const issues = ruleCheck(kind, data, ctx);
+  let ai = null;
+  if (me.perms.includes('ai') && aiConfigured(env)) {
+    const slim = kind === 'settings' ? { squareConnected: ctx.squareConnected, current: Object.fromEntries(Object.entries(s).filter(([k]) => !k.startsWith('sq_'))), categories } : { categories, saleRunning: ctx.salePct || 0 };
+    ai = await aiReview(env, kind, data, slim, issues);
+    if (ai) issues.push(...ai.issues);
+  }
+  return json({ issues, ai: !!ai, aiNote: ai?.note || null });
+});
+on('GET', '/admin/ai/status', async ({ env, request }) => {
+  const me = await requireStaff(env, request);
+  return json({ configured: aiConfigured(env), allowed: me.perms.includes('ai'), model: env.GROQ_MODEL || 'openai/gpt-oss-120b' });
+});
+on('POST', '/admin/ai/chat', async (ctx) => {
+  const { env, request } = ctx;
+  const me = await requireStaff(env, request, 'ai'); const b = await readJson(request);
+  await limitOr429(env, request, 'ai:' + me.id, 40, 600);
+  const history = (Array.isArray(b.messages) ? b.messages : []).filter((m) => m && typeof m.content === 'string').slice(-16);
+  if (!history.length) fail(400, 'Ask something.');
+  try { return json(await aiChat(env, me, history, (method, path, body) => internalCall(ctx, method, path, body))); }
+  catch (e) { await log(env, 'warn', 'AI chat failed', { e: String(e) }); fail(502, e.message || 'The assistant is unavailable right now.'); }
+});
+on('POST', '/admin/ai/apply', async (ctx) => {
+  const { env, request } = ctx;
+  await requireStaff(env, request, 'ai'); const b = await readJson(request);
+  const actions = (Array.isArray(b.actions) ? b.actions : []).slice(0, 20);
+  if (!actions.length) fail(400, 'Nothing to apply.');
+  const results = [];
+  for (const a0 of actions) {
+    const a = { method: String(a0.method || '').toUpperCase(), path: a0.path, body: a0.body };
+    if (!allowedPath(a.method, a.path) || a.method === 'GET') { results.push({ ok: false, error: 'Not allowed through the assistant.' }); continue; }
+    if (riskOf(a) && !b.sure) { results.push({ ok: false, error: 'This is a risky change and needs "Yes, I\'m sure".' }); continue; }
+    const r = await internalCall(ctx, a.method, a.path, a.body);
+    results.push(r.status < 400 ? { ok: true } : { ok: false, error: r.data?.error || `Error ${r.status}` });
+    if (r.status >= 400) break; // stop on first failure so later steps don't run on a half-done change
+  }
+  return json({ results });
+});
+
 // ======================================================================
 on('GET', '/admin/dashboard', async ({ env, request }) => {
   await requireStaff(env, request);
@@ -633,7 +789,7 @@ on('GET', '/admin/orders', async ({ env, request, url }) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { w.push('created_at >= ?'); v.push(from); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { w.push('created_at < ?'); v.push(new Date(Date.parse(to) + 864e5).toISOString()); }
   const page = int(url.searchParams.get('page'), 1, 1000) || 1;
-  const rows = (await env.DB.prepare(`SELECT o.id, o.code, o.status, o.fulfillment, o.name, o.email, o.phone, o.ship_city, o.ship_state, o.total_cents, o.refunded_cents, o.created_at, o.paid_at,
+  const rows = (await env.DB.prepare(`SELECT o.id, o.code, o.status, o.fulfillment, o.name, o.email, o.phone, o.ship_city, o.ship_state, o.total_cents, o.refunded_cents, o.created_at, o.paid_at, o.payment_method,
       (SELECT SUM(qty) FROM order_items WHERE order_id = o.id) AS item_count,
       (SELECT image_url FROM order_items WHERE order_id = o.id ORDER BY id LIMIT 1) AS image_url
     FROM orders o WHERE ${w.join(' AND ')} ORDER BY o.id DESC LIMIT 51 OFFSET ?`).bind(...v, (page - 1) * 50).all()).results;
@@ -656,13 +812,53 @@ on('POST', '/admin/orders/:id/status', async ({ env, request, params }) => {
   assertTransition(o.status, to);
   if (to === 'ready_for_pickup' && o.fulfillment !== 'pickup') fail(400, 'Only pickup orders can be marked ready for pickup.');
   if (to === 'shipped' && o.fulfillment !== 'shipping') fail(400, 'Only shipping orders can be marked shipped.');
+  if (to === 'completed' && o.payment_method === 'store' && !o.paid_at) fail(400, 'This order is not paid yet. Use "Paid & picked up" when the customer pays at the counter.');
   if (o.items.some((i) => i.status === 'awaiting_approval' || i.status === 'unavailable') && ['ready_for_pickup', 'shipped', 'completed'].includes(to)) fail(400, 'Resolve the unavailable item first (substitute or refund).');
   const carrier = str(b.carrier, 40) || null, tracking = str(b.tracking, 60) || null;
   await env.DB.prepare('UPDATE orders SET status = ?, tracking_carrier = COALESCE(?, tracking_carrier), tracking_number = COALESCE(?, tracking_number), updated_at = ? WHERE id = ?').bind(to, carrier, tracking, nowIso(), o.id).run();
   await event(env, o.id, me.email, 'status', `${o.status} → ${to}${tracking ? ' (' + (carrier || '') + ' ' + tracking + ')' : ''}`);
   const fresh = await loadOrder(env, 'id', o.id), site = siteUrl(request, env);
-  if (to === 'ready_for_pickup') await notify(env, 'ready_for_pickup', fresh, fresh.items, { link: orderLink(site, o.code) });
-  if (to === 'shipped') await notify(env, 'shipped', fresh, fresh.items, { link: orderLink(site, o.code) });
+  if (to === 'ready_for_pickup') await notify(env, 'ready_for_pickup', fresh, fresh.items, { link: await customerLink(env, site, o.code) });
+  if (to === 'shipped') await notify(env, 'shipped', fresh, fresh.items, { link: await customerLink(env, site, o.code) });
+  return json({ ok: true });
+});
+on('POST', '/admin/orders/:id/items/:iid/remove', async ({ env, request, params }) => {
+  const me = await requireStaff(env, request, 'orders');
+  const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
+  if (o.payment_method !== 'store' || o.paid_at) fail(400, 'This order is paid — use Refund instead.');
+  const it = o.items.find((i) => i.id === int(params.iid, 1)); if (!it) fail(404, 'Item not found');
+  await removeUnpaidItems(env, o, 'Item unavailable', me.email, [it.id]);
+  return json({ ok: true });
+});
+// Pay at pickup: customer paid at the counter (marks paid; optionally completes the order).
+on('POST', '/admin/orders/:id/paid-in-store', async ({ env, request, params }) => {
+  const me = await requireStaff(env, request, 'orders'); const b = await readJson(request);
+  const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
+  if (o.payment_method !== 'store' || o.paid_at) fail(400, 'This order is already paid.');
+  if (!['processing', 'ready_for_pickup', 'awaiting_approval'].includes(o.status)) fail(400, 'This order cannot be marked paid.');
+  if (o.items.some((i) => i.status === 'awaiting_approval' || i.status === 'unavailable')) fail(400, 'Resolve the unavailable item first (substitute or remove it).');
+  const how = ['cash', 'card', 'other'].includes(b.method) ? b.method : 'other', now = nowIso();
+  const done = b.complete !== false;
+  await env.DB.prepare(`UPDATE orders SET paid_at = ?, payment_status = ?, status = ?, updated_at = ? WHERE id = ?`).bind(now, 'PAID_IN_STORE_' + how.toUpperCase(), done ? 'completed' : o.status, now, o.id).run();
+  await event(env, o.id, me.email, 'paid_in_store', `Paid at the counter (${how}) — ${money(o.total_cents)} before any sales tax rung up in store${done ? '; picked up' : ''}`);
+  return json({ ok: true });
+});
+// Pay at pickup: customer never came / doesn't want it. Nothing was charged; items go back on the shelf.
+on('POST', '/admin/orders/:id/cancel-unpaid', async ({ env, request, params }) => {
+  const me = await requireStaff(env, request, 'orders'); const b = await readJson(request);
+  const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
+  if (o.payment_method !== 'store' || o.paid_at) fail(400, 'Only unpaid pay-at-pickup orders can be canceled this way. Use Cancel & refund for paid orders.');
+  if (['canceled', 'completed', 'expired'].includes(o.status)) fail(400, 'This order is already closed.');
+  const reason = str(b.reason, 150) || 'Not picked up', now = nowIso();
+  const back = o.items.filter((i) => i.variation_id && ['ok', 'substituted'].includes(i.status));
+  await env.DB.batch([
+    ...back.map((i) => env.DB.prepare('UPDATE variations SET stock = CASE WHEN stock IS NULL THEN NULL ELSE stock + ? END WHERE id = ?').bind(i.qty, i.variation_id)),
+    env.DB.prepare('DELETE FROM stock_holds WHERE order_id = ?').bind(o.id),
+    env.DB.prepare("UPDATE substitutions SET status = 'withdrawn' WHERE order_id = ? AND status = 'pending'").bind(o.id),
+    env.DB.prepare("UPDATE orders SET status = 'canceled', updated_at = ? WHERE id = ?").bind(now, o.id),
+    env.DB.prepare('INSERT INTO order_events (order_id, actor, action, detail, at) VALUES (?, ?, ?, ?, ?)').bind(o.id, me.email, 'canceled', `${reason}. Nothing was charged; ${back.length} item(s) put back in stock.`, now),
+  ]);
+  if (b.notify !== false) await notify(env, 'canceled', o, o.items, { reason });
   return json({ ok: true });
 });
 on('POST', '/admin/orders/:id/note', async ({ env, request, params }) => {
@@ -711,7 +907,7 @@ on('GET', '/admin/orders/:id/items/:iid/alternatives', async ({ env, request, pa
   const it = o.items.find((i) => i.id === int(params.iid, 1)); if (!it) fail(404, 'Item not found');
   const rows = (await env.DB.prepare(`SELECT v.id AS variation_id, v.name AS vname, v.price_cents, p.id AS product_id, p.name,
       (SELECT COALESCE(url, '/api/img/' || id) FROM product_images i WHERE i.product_id = p.id ORDER BY sort, id LIMIT 1) AS image_url
-    FROM variations v JOIN products p ON p.id = v.product_id WHERE p.status = 'active' AND v.price_cents = ? AND v.id != ?`).bind(it.unit_cents, it.variation_id || 0).all()).results;
+    FROM variations v JOIN products p ON p.id = v.product_id WHERE p.status = 'active' AND (v.price_cents = ? OR v.price_cents = ?) AND v.id != ?`).bind(it.unit_cents, it.list_cents || it.unit_cents, it.variation_id || 0).all()).results;
   const av = await availability(env, rows.map((r) => r.variation_id));
   return json({ alternatives: rows.filter((r) => (av[r.variation_id] || 0) >= it.qty).map((r) => ({ ...r, available: av[r.variation_id] })) });
 });
@@ -723,19 +919,19 @@ on('POST', '/admin/orders/:id/items/:iid/substitute', async ({ env, request, par
   const v = await env.DB.prepare(`SELECT v.id, v.price_cents, v.name AS vname, p.id AS pid, p.name, (SELECT COALESCE(url, '/api/img/' || id) FROM product_images i WHERE i.product_id = p.id ORDER BY sort, id LIMIT 1) AS image_url
     FROM variations v JOIN products p ON p.id = v.product_id WHERE v.id = ? AND p.status = 'active'`).bind(int(b.variation_id, 1) || 0).first();
   if (!v) fail(404, 'Replacement not found.');
-  if (v.price_cents !== it.unit_cents) fail(400, 'The replacement must be the same price.');
+  if (v.price_cents !== it.unit_cents && v.price_cents !== it.list_cents) fail(400, 'The replacement must be the same price.');
   const held = await placeHolds(env, o.id, [{ variation_id: v.id, qty: it.qty }], 7 * 24 * 60);
   if (held.failed.length) fail(409, 'Not enough of that replacement in stock.');
   const tok = makeToken(24), now = nowIso(), newName = v.name + (v.vname && v.vname !== 'Regular' ? ` (${v.vname})` : '');
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO substitutions (order_id, order_item_id, new_product_id, new_variation_id, new_name, new_image_url, unit_cents, token_hash, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(o.id, it.id, v.pid, v.id, newName, v.image_url, v.price_cents, await sha256Hex(tok), text(b.message, 500) || null, now),
+      .bind(o.id, it.id, v.pid, v.id, newName, v.image_url, it.unit_cents, await sha256Hex(tok), text(b.message, 500) || null, now),
     env.DB.prepare("UPDATE order_items SET status = 'awaiting_approval' WHERE id = ?").bind(it.id),
     env.DB.prepare("UPDATE orders SET status = 'awaiting_approval', updated_at = ? WHERE id = ?").bind(now, o.id),
   ]);
   const link = `${siteUrl(request, env)}/substitute.html?t=${encodeURIComponent(tok)}`;
   await event(env, o.id, me.email, 'substitution_offered', `${it.name} → ${newName}`);
-  const mail = await notify(env, 'substitution_offer', o, o.items, { original: it.name, offered: newName, unit_cents: v.price_cents, link, linkText: 'Approve or decline' });
+  const mail = await notify(env, 'substitution_offer', o, o.items, { original: it.name, offered: newName, unit_cents: it.unit_cents, link, linkText: 'Approve or decline' });
   return json({ ok: true, link, emailStatus: mail });
 });
 on('POST', '/admin/substitutions/:id/withdraw', async ({ env, request, params }) => {
@@ -753,7 +949,7 @@ on('POST', '/admin/orders/:id/resend', async ({ env, request, params }) => {
   await requireStaff(env, request, 'orders'); const b = await readJson(request);
   const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
   const kind = ['customer_confirmation', 'ready_for_pickup', 'shipped'].includes(b.kind) ? b.kind : 'customer_confirmation';
-  return json({ status: await notify(env, kind, o, o.items, { link: orderLink(siteUrl(request, env), o.code) }) });
+  return json({ status: await notify(env, kind, o, o.items, { link: await customerLink(env, siteUrl(request, env), o.code) }) });
 });
 
 // ======================================================================
@@ -926,11 +1122,14 @@ on('DELETE', '/admin/categories/:id', async ({ env, request, params }) => {
 // ======================================================================
 // ADMIN — settings & Square
 // ======================================================================
-const EDITABLE = ['shipping_enabled', 'pickup_enabled', 'shipping_mode', 'shipping_flat_cents', 'shipping_free_over_cents', 'shipping_tiers', 'shipping_note', 'pickup_instructions', 'store_email', 'store_phone', 'hold_minutes'];
+const EDITABLE = ['shipping_enabled', 'pickup_enabled', 'shipping_mode', 'shipping_flat_cents', 'shipping_free_over_cents', 'shipping_tiers', 'shipping_note', 'pickup_instructions', 'store_email', 'store_phone', 'hold_minutes',
+  'pay_in_store_enabled', 'pickup_ready_text', 'shipping_time_text', 'pickup_hold_days', 'site_announcement', 'marquee_items', 'store_address', 'store_hours',
+  'sale_enabled', 'sale_percent', 'sale_category_id', 'sale_label', 'sale_ends'];
 on('GET', '/admin/settings', async ({ env, request }) => {
   await requireStaff(env, request, 'settings');
   const s = await getSettings(env);
-  return json({ settings: Object.fromEntries(EDITABLE.map((k) => [k, s[k] ?? ''])),
+  const cats = (await env.DB.prepare('SELECT id, name FROM categories ORDER BY sort, name').all()).results;
+  return json({ settings: Object.fromEntries(EDITABLE.map((k) => [k, s[k] ?? ''])), categories: cats, saleActive: saleInfo(s),
     square: { appConfigured: sq.appConfigured(env), connected: await sq.isConnected(env), env: sq.squareEnv(env), locationId: s.sq_location_id || null, locationName: s.sq_location_name || null,
       locations: s.sq_locations ? JSON.parse(s.sq_locations) : [], connectedAt: s.sq_connected_at || null, webhookSecretSet: !!env.SQUARE_WEBHOOK_SIGNATURE_KEY, webhookUrl: `${siteUrl(request, env)}/api/square/webhook` },
     email: { configured: !!(env.RESEND_API_KEY && env.EMAIL_FROM), from: env.EMAIL_FROM || null } });
@@ -945,10 +1144,20 @@ on('PUT', '/admin/settings', async ({ env, request }) => {
     else if (k === 'shipping_tiers') { const t = (Array.isArray(v) ? v : []).map((x) => ({ min_cents: dollarsToCents(x.min), rate_cents: dollarsToCents(x.rate) })); if (t.some((x) => x.min_cents == null || x.rate_cents == null)) fail(400, 'Every shipping tier needs a minimum and a rate.'); v = JSON.stringify(t); }
     else if (k === 'store_email') { v = str(v, 120); if (v && !isEmail(v)) fail(400, 'Store email is not valid.'); }
     else if (k === 'hold_minutes') v = String(int(v, 5, 30) || 10);
+    else if (k === 'pickup_hold_days') v = String(int(v, 1, 30) || 3);
+    else if (k === 'marquee_items') { const a = (Array.isArray(v) ? v : String(v || '').split('\n')).map((x) => str(x, 60)).filter(Boolean).slice(0, 20); v = JSON.stringify(a); }
+    else if (k === 'store_hours') { const a = (Array.isArray(v) ? v : []).map((r) => [str(r?.[0], 40), str(r?.[1], 40)]).filter((r) => r[0] && r[1]).slice(0, 10); v = JSON.stringify(a); }
+    else if (k === 'sale_percent') { v = v === '' || v == null ? '' : int(v, 1, 90); if (v === null) fail(400, 'Sale percent must be a whole number from 1 to 90.'); v = String(v); }
+    else if (k === 'sale_category_id') { v = v ? String(int(v, 1) || '') : ''; if (v && !(await env.DB.prepare('SELECT id FROM categories WHERE id = ?').bind(Number(v)).first())) fail(400, 'Pick a valid category for the sale.'); }
+    else if (k === 'sale_ends') { v = str(v, 10); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) fail(400, 'Sale end date must be a date.'); }
+    else if (k === 'site_announcement' || k === 'sale_label') v = str(v, 140);
+    else if (k === 'pickup_ready_text' || k === 'shipping_time_text') v = str(v, 160);
     else v = text(v, 1000);
     await setSetting(env, k, v);
   }
-  return json({ ok: true });
+  const S = await getSettings(env);
+  if (S.sale_enabled === '1' && !(Number(S.sale_percent) >= 1)) { await setSetting(env, 'sale_enabled', '0'); fail(400, 'Enter the sale percent (1–90) before turning the sale on.'); }
+  return json({ ok: true, sale: saleInfo(S) });
 });
 on('POST', '/admin/square/location', async ({ env, request }) => {
   await requireStaff(env, request, 'settings'); const b = await readJson(request);

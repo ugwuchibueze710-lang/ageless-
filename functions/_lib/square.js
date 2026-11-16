@@ -206,6 +206,16 @@ function lineItems(items) {
 }
 function orderBody(c, o, items, shippingCents) {
   const order = { location_id: c.locationId, reference_id: o.code, line_items: lineItems(items) };
+  // sale price: catalog items keep their catalog link and get a fixed per-line discount, so Square charges exactly what the site showed
+  const disc = [];
+  items.forEach((it, i) => {
+    if (it.square_variation_id && it.list_cents && it.list_cents > it.unit_cents) {
+      const uid = 'sale-' + i;
+      disc.push({ uid, name: 'Sale', type: 'FIXED_AMOUNT', amount_money: { amount: (it.list_cents - it.unit_cents) * it.qty, currency: 'USD' }, scope: 'LINE_ITEM' });
+      order.line_items[i].applied_discounts = [{ discount_uid: uid }];
+    }
+  });
+  if (disc.length) order.discounts = disc;
   if (shippingCents > 0) order.service_charges = [{ name: 'Shipping', amount_money: { amount: shippingCents, currency: 'USD' }, calculation_phase: 'TOTAL_PHASE' }];
   const recipient = { display_name: o.name, email_address: o.email, phone_number: o.phone };
   if (o.fulfillment === 'shipping') {
