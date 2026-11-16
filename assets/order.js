@@ -1,5 +1,6 @@
 (function(){
   var pg=document.getElementById('pg'), q=new URLSearchParams(location.search), c=q.get('c'), t=q.get('t');
+  function prettyDay(d){ var t=new Date(d+'T12:00:00Z'); if(isNaN(t)) return d; var L=document.documentElement.lang||'en'; try{ return t.toLocaleDateString(L,{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'}); }catch(e){ return t.toDateString(); } }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(x){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x];}); }
   function money(n){ return '$'+((n||0)/100).toFixed(2); }
   var LABEL={pending_payment:['Waiting for payment','warn'],payment_failed:['Payment did not go through','bad'],paid:['Paid — being prepared',''],processing:['Being prepared',''],
@@ -17,7 +18,9 @@
         '<h1>Order '+esc(o.code)+'</h1><p><span class="pill '+L[1]+'">'+esc(L[0])+'</span></p>'+
         (o.status==='pending_payment'?'<p class="mut" style="margin-top:10px">Your payment is still processing. This page updates by itself.</p>':'')+
         (unpaid&&open?'<p style="margin-top:12px"><b>Pay '+money(o.total_cents)+' when you pick up</b> (cash or card, plus sales tax if any). We\'ll hold your order for '+o.hold_days+' days.</p>':'')+
-        (o.ready_text&&open&&o.status!=='ready_for_pickup'&&o.status!=='shipped'?'<p class="mut" style="margin-top:6px">'+esc(o.ready_text)+' We\'ll email you when it\'s ready.</p>':'')+
+        (o.ready_text&&open&&o.status!=='ready_for_pickup'&&o.status!=='shipped'?'<p class="mut" style="margin-top:6px">'+esc(o.ready_text)+(o.fulfillment==='shipping'?' We\'ll email you the delivery day when it ships.':' We\'ll email you when it\'s ready.')+'</p>':'')+
+        (o.status==='ready_for_pickup'?'<p style="margin-top:12px"><b>Your order is ready — come pick it up at Ageless.</b></p>':'')+
+        (o.eta_date&&o.status==='shipped'?'<p style="margin-top:12px;font-size:1.1em">Arriving <b>'+esc(prettyDay(o.eta_date))+'</b></p>'+(o.eta_note?'<p class="mut">'+esc(o.eta_note)+'</p>':''):'')+
         (o.status==='awaiting_approval'?'<p class="mut" style="margin-top:10px">An item was unavailable. Check your email for the replacement offer and approve or decline it.</p>':'')+
         '<h2>'+(o.fulfillment==='shipping'?'Shipping to':'Pickup')+'</h2><p class="mut">'+
         (o.fulfillment==='shipping'?esc(o.address.street)+(o.address.street2?', '+esc(o.address.street2):'')+'<br>'+esc(o.address.city)+', '+esc(o.address.state)+' '+esc(o.address.zip):esc(o.pickup_instructions||'At Ageless inside Eastland Mall.'))+'</p>'+

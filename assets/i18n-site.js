@@ -1,6 +1,9 @@
 // Shop translations: [English, Español, עברית, Français]
 (function () {
   var T = [
+    ['Your order is ready — come pick it up at Ageless.', 'Tu pedido está listo: ven a recogerlo a Ageless.', 'ההזמנה שלך מוכנה — אפשר לבוא לאסוף אותה ב-Ageless.', 'Votre commande est prête — venez la récupérer chez Ageless.'],
+    ['Arriving', 'Llega el', 'מגיע ב', 'Arrive le'],
+    ['Shipped — on its way', 'Enviado — en camino', 'נשלח — בדרך אליך', 'Expédiée — en route'],
     ['Shop', 'Tienda', 'חנות', 'Boutique'],
     ['Visit Us', 'Visítanos', 'בקרו אותנו', 'Nous rendre visite'],
     ['Open cart', 'Abrir carrito', 'פתח עגלה', 'Ouvrir le panier'],
@@ -170,6 +173,7 @@
     ['Language', 'Idioma', 'שפה', 'Langue'],
   ];
   var R = [
+    [/^(.+) We'll email you the delivery day when it ships\.$/, ['$1 Te enviaremos por correo el día de entrega cuando se envíe.', '$1 נשלח לך במייל את יום המסירה כשההזמנה תישלח.', '$1 Nous vous enverrons le jour de livraison par e-mail à l\'expédition.']],
     [/^Only (\d+) left\.?$/, ['Solo quedan $1', 'נשארו רק $1', 'Plus que $1']],
     [/^Call (.+)$/, ['Llamar al $1', 'התקשרו $1', 'Appeler le $1']],
     [/^Thank you, (.+)!$/, ['¡Gracias, $1!', 'תודה, $1!', 'Merci, $1 !']],

@@ -6,3 +6,9 @@ compatibility_date = "2025-10-01"
 binding = "DB"
 database_name = "ageless-db"
 database_id = "856fc5b6-0255-4db3-9d56-34d83b97e927"
+
+[vars]
+# The one public address. Emails, Square sign-in and the Square webhook all use it.
+SITE_URL = "https://agelessevv.com"
+# Sender for customer emails (needs RESEND_API_KEY as a Secret and agelessevv.com verified in Resend).
+EMAIL_FROM = "Ageless <orders@agelessevv.com>"

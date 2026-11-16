@@ -10,7 +10,29 @@
   function dollars(c) { return c == null || c === '' ? '' : (Number(c) / 100).toFixed(2); }
   function when(iso) { if (!iso) return ''; var d = new Date(iso); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
   var STATUS = { pending_payment: 'Pending payment', paid: 'Paid', processing: 'Processing', awaiting_approval: 'Awaiting customer approval', ready_for_pickup: 'Ready for pickup',
-    shipped: 'Shipped', completed: 'Completed', canceled: 'Canceled', refunded: 'Refunded', payment_failed: 'Payment failed', expired: 'Expired' };
+    shipped: 'Shipped — on its way', completed: 'Completed', canceled: 'Canceled', refunded: 'Refunded', payment_failed: 'Payment failed', expired: 'Expired' };
+  function prettyDay(d) { var t = new Date(d + 'T12:00:00Z'); return isNaN(t) ? d : t.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }); }
+  function ymd(t) { return t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2); }
+  function addBusinessDays(n) { var t = new Date(); while (n > 0) { t.setDate(t.getDate() + 1); if (t.getDay() !== 0 && t.getDay() !== 6) n--; } return ymd(t); }
+  // Ship an order (first=true) or change its delivery day later. The customer gets an email with the item photos and the day.
+  function etaModal(o, id, first) {
+    var def = o.eta_date || addBusinessDays(Number(o.delivery_days) || 4), today = ymd(new Date());
+    var m = modal('<h2>' + (first ? 'Mark shipped' : 'Change delivery date') + '</h2>' +
+      '<p class="muted small">' + (first ? 'The customer gets an email with a photo of each item and the day it arrives.' : 'The customer gets an email with the new day.') + '</p>' +
+      '<form class="form" id="etaf"><label>Customer gets it on<input type="date" name="eta_date" required min="' + today + '" value="' + esc(def) + '"></label>' +
+      '<p class="muted small" id="etaPretty"></p>' +
+      '<label>Message to the customer (optional)<input name="eta_note" maxlength="200" value="' + esc(o.eta_note || '') + '" placeholder="e.g. Delivered by USPS, usually by 5 PM"></label>' +
+      '<label>Carrier (optional)<input name="carrier" value="' + esc(o.tracking_carrier || '') + '" placeholder="USPS, UPS, FedEx…"></label><label>Tracking number (optional)<input name="tracking" value="' + esc(o.tracking_number || '') + '"></label>' +
+      '<div class="row"><button class="btn primary">' + (first ? 'Mark shipped & email customer' : 'Save & email customer') + '</button><button type="button" class="btn" data-close>Cancel</button></div></form>');
+    var f = $('#etaf', m), pretty = function () { $('#etaPretty', m).textContent = f.eta_date.value ? 'Email will say: Arriving ' + prettyDay(f.eta_date.value) : ''; };
+    f.eta_date.oninput = pretty; pretty();
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var body = { eta_date: f.eta_date.value, eta_note: f.eta_note.value, carrier: f.carrier.value, tracking: f.tracking.value };
+      if (first) body.status = 'shipped';
+      act(f.querySelector('.primary'), api('/admin/orders/' + o.id + (first ? '/status' : '/eta'), { method: 'POST', body: body }), first ? 'Marked shipped — customer emailed' : 'Delivery date updated — customer emailed').then(function () { m.remove(); viewOrder(id); });
+    };
+  }
   function statusBadge(s) { var cls = { paid: 'b-ok', processing: 'b-warn', awaiting_approval: 'b-warn', ready_for_pickup: 'b-ok', shipped: 'b-ok', completed: '', canceled: 'b-bad', refunded: 'b-bad', payment_failed: 'b-bad', pending_payment: '' }[s] || ''; return '<span class="badge ' + cls + '">' + esc(STATUS[s] || s) + '</span>'; }
   function fulBadge(f) { return f === 'pickup' ? '<span class="badge b-pickup">In-store pickup</span>' : '<span class="badge b-shipping">Home delivery</span>'; }
 
@@ -249,7 +271,8 @@
         (unpaidStore && open ? '<div class="alert">The customer pays when they pick up. Collect <b>' + money(o.total_cents) + '</b> plus any sales tax at the register, then tap <b>Paid & picked up</b>.</div>' : '') +
         '<div class="grid g2"><div class="card"><h2>Customer</h2><dl class="kv"><dt>Name</dt><dd>' + esc(o.name) + '</dd><dt>Phone</dt><dd><a href="tel:' + esc(o.phone) + '">' + esc(o.phone) + '</a></dd>' +
         '<dt>Email</dt><dd><a href="mailto:' + esc(o.email) + '">' + esc(o.email) + '</a></dd>' + (addr ? '<dt>Ship to</dt><dd>' + addr + '</dd>' : '<dt>Pickup</dt><dd>In store at Eastland Mall</dd>') +
-        (o.notes ? '<dt>Note</dt><dd>' + esc(o.notes) + '</dd>' : '') + (o.tracking_number ? '<dt>Tracking</dt><dd>' + esc(o.tracking_carrier || '') + ' ' + esc(o.tracking_number) + '</dd>' : '') + '</dl></div>' +
+        (o.notes ? '<dt>Note</dt><dd>' + esc(o.notes) + '</dd>' : '') + (o.eta_date ? '<dt>Arriving</dt><dd><b>' + esc(prettyDay(o.eta_date)) + '</b>' + (o.eta_note ? '<br><span class="muted small">' + esc(o.eta_note) + '</span>' : '') + '</dd>' : '') +
+        (o.tracking_number ? '<dt>Tracking</dt><dd>' + esc(o.tracking_carrier || '') + ' ' + esc(o.tracking_number) + '</dd>' : '') + '</dl></div>' +
         '<div class="card"><h2>Payment</h2><dl class="kv"><dt>Subtotal</dt><dd>' + money(o.subtotal_cents) + '</dd>' + (o.shipping_cents ? '<dt>Shipping</dt><dd>' + money(o.shipping_cents) + '</dd>' : '') +
         '<dt>Tax</dt><dd>' + money(o.tax_cents) + '</dd><dt>Total</dt><dd class="money">' + money(o.total_cents) + '</dd>' + (o.refunded_cents ? '<dt>Refunded</dt><dd>' + money(o.refunded_cents) + '</dd>' : '') +
         (o.discount_cents ? '<dt>Sale savings</dt><dd>' + money(o.discount_cents) + '</dd>' : '') + '<dt>Payment</dt><dd>' + (o.payment_method === 'store' ? (o.paid_at ? 'Paid at the store (' + esc((o.payment_status || '').replace('PAID_IN_STORE_', '').toLowerCase()) + ')' : 'Pay at pickup — not paid yet') : o.card_last4 ? esc(o.card_brand || 'Card') + ' •••• ' + esc(o.card_last4) : '—') + '</dd><dt>Placed</dt><dd>' + when(o.created_at) + '</dd>' + (o.paid_at ? '<dt>Paid</dt><dd>' + when(o.paid_at) + '</dd>' : '') +
@@ -269,20 +292,20 @@
         '<div class="card"><h2>Update order</h2>' + (actions.length ? '<div class="row">' + actions.map(function (a) { return '<button class="btn' + (a[0] !== 'completed' ? ' primary' : '') + '" data-st="' + a[0] + '">' + a[1] + '</button>'; }).join('') + '</div>' : '<p class="muted">No status changes available.</p>') +
         (unpaidStore && open ? '<div class="sep"></div><div class="row"><button class="btn primary" id="paidStore">Paid & picked up</button><button class="btn danger" id="noShow">Cancel — not picked up</button></div>' : '') +
         (owner && o.square_payment_id && remaining > 0 ? '<div class="sep"></div><div class="row"><button class="btn danger" id="refundBtn">Refund…</button><span class="muted small">' + money(remaining) + ' can still be refunded</span></div>' : '') +
-        '<div class="sep"></div><div class="row"><button class="btn small" data-resend="customer_confirmation">Resend confirmation</button></div>' +
+        (o.fulfillment === 'shipping' && o.status === 'shipped' ? '<div class="sep"></div><div class="row"><button class="btn" id="etaBtn">Change delivery date…</button><span class="muted small">Emails the customer the new day</span></div>' : '') +
+        '<div class="sep"></div><div class="row"><button class="btn small" data-resend="customer_confirmation">Resend confirmation</button>' +
+        (o.status === 'ready_for_pickup' ? '<button class="btn small" data-resend="ready_for_pickup">Resend "ready" email</button>' : '') +
+        (o.status === 'shipped' ? '<button class="btn small" data-resend="shipped">Resend "on its way" email</button>' : '') + '</div>' +
         '<div class="sep"></div><form id="noteF" class="row"><input name="note" placeholder="Add an internal note" style="flex:1"><button class="btn small">Add note</button></form></div>' +
         '<div class="grid g2"><div class="card"><h2>History</h2><ul class="timeline">' + o.events.map(function (e) { return '<li><b>' + when(e.at) + ' · ' + esc(e.actor) + '</b>' + esc(e.action.replace(/_/g, ' ')) + (e.detail ? ' — ' + esc(e.detail) : '') + '</li>'; }).join('') + '</ul></div>' +
         '<div class="card"><h2>Emails</h2>' + (o.emails.length ? '<table class="simple">' + o.emails.map(function (m) { return '<tr><td><a href="#/outbox?id=' + m.id + '">' + esc(m.subject) + '</a><br><span class="muted small">' + esc(m.to_email) + ' · ' + when(m.created_at) + '</span></td><td>' + mailBadge(m.status) + '</td></tr>'; }).join('') + '</table>' : '<p class="muted">None.</p>') + '</div></div>';
 
       $$('[data-st]').forEach(function (b) { b.onclick = function () {
         var to = b.dataset.st;
-        if (to === 'shipped') {
-          var m = modal('<h2>Mark shipped</h2><form class="form" id="shf"><label>Carrier<input name="carrier" placeholder="USPS, UPS, FedEx…"></label><label>Tracking number<input name="tracking"></label><div class="row"><button class="btn primary">Mark shipped & email customer</button><button type="button" class="btn" data-close>Cancel</button></div></form>');
-          $('#shf', m).onsubmit = function (e) { e.preventDefault(); act(e.target.querySelector('button'), api('/admin/orders/' + o.id + '/status', { method: 'POST', body: { status: 'shipped', carrier: e.target.carrier.value, tracking: e.target.tracking.value } }), 'Marked shipped').then(function () { m.remove(); viewOrder(id); }); };
-          return;
-        }
+        if (to === 'shipped') { etaModal(o, id, true); return; }
         act(b, api('/admin/orders/' + o.id + '/status', { method: 'POST', body: { status: to } }), 'Updated').then(function () { viewOrder(id); });
       }; });
+      if ($('#etaBtn')) $('#etaBtn').onclick = function () { etaModal(o, id, false); };
       $$('[data-unav]').forEach(function (b) { b.onclick = function () { if (confirm('Mark this item unavailable? You will then offer a same-price substitute or refund it.')) act(b, api('/admin/orders/' + o.id + '/items/' + b.dataset.unav + '/unavailable', { method: 'POST' })).then(function () { viewOrder(id); }); }; });
       $$('[data-sub]').forEach(function (b) { b.onclick = function () { substitutePicker(o, b.dataset.sub, id); }; });
       $$('[data-refitem]').forEach(function (b) { b.onclick = function () {
@@ -519,7 +542,8 @@
         '<label class="check"><input type="checkbox" name="pay_in_store_enabled"' + (s.pay_in_store_enabled === '1' ? ' checked' : '') + '> Let pickup customers pay at the store (cash or card at the counter)</label>' +
         '<p class="muted small">While Square is not connected, pay-at-pickup is the only way to order, so it stays on.</p>' +
         '<label>When is a pickup order usually ready? (shown at checkout and in the confirmation email)<input name="pickup_ready_text" maxlength="160" value="' + esc(s.pickup_ready_text) + '" placeholder="e.g. Ready in about 2 hours · Ready today by 4 PM"></label>' +
-        '<label>How long does shipping take? (shown at checkout and in emails)<input name="shipping_time_text" maxlength="160" value="' + esc(s.shipping_time_text) + '" placeholder="e.g. Ships in 1–2 business days, arrives in 3–5"></label>' +
+        '<label>How long does delivery take? (shown at checkout and in the confirmation email)<input name="shipping_time_text" maxlength="160" value="' + esc(s.shipping_time_text) + '" placeholder="e.g. Usually arrives in 3–5 business days"></label>' +
+        '<label>Usual delivery time in business days (pre-fills the arrival day when you mark an order shipped)<input name="delivery_days" type="number" min="1" max="30" value="' + esc(s.delivery_days || '4') + '"></label>' +
         '<label>Hold unpaid pickup orders for (days)<input name="pickup_hold_days" inputmode="numeric" value="' + esc(s.pickup_hold_days) + '"></label>' +
         '<h2 style="margin-top:8px">Sale</h2>' +
         (r.saleActive ? '<p><span class="badge b-ok">Live now</span> ' + esc(r.saleActive.label) + '</p>' : '') +
@@ -557,7 +581,7 @@
           pickup_enabled: f.pickup_enabled.checked, pickup_instructions: f.pickup_instructions.value, shipping_enabled: f.shipping_enabled.checked, shipping_mode: f.shipping_mode.value,
           shipping_flat_cents: f.shipping_flat_cents.value, shipping_free_over_cents: f.shipping_free_over_cents.value, shipping_note: f.shipping_note.value, store_email: f.store_email.value, store_phone: f.store_phone.value, hold_minutes: f.hold_minutes.value,
           shipping_tiers: $$('tr', tb).filter(function (tr) { return $('[name=trate]', tr).value !== ''; }).map(function (tr) { return { min: $('[name=tmin]', tr).value || '0', rate: $('[name=trate]', tr).value }; }),
-          pay_in_store_enabled: f.pay_in_store_enabled.checked, pickup_ready_text: f.pickup_ready_text.value, shipping_time_text: f.shipping_time_text.value, pickup_hold_days: f.pickup_hold_days.value,
+          pay_in_store_enabled: f.pay_in_store_enabled.checked, pickup_ready_text: f.pickup_ready_text.value, shipping_time_text: f.shipping_time_text.value, delivery_days: f.delivery_days.value, pickup_hold_days: f.pickup_hold_days.value,
           sale_enabled: f.sale_enabled.checked, sale_percent: f.sale_percent.value, sale_category_id: f.sale_category_id.value, sale_label: f.sale_label.value, sale_ends: f.sale_ends.value,
           site_announcement: f.site_announcement.value, marquee_items: f.marquee_items.value.split('\n'), store_address: f.store_address.value,
           store_hours: $$('tr', hb).map(function (tr) { return [$('[name=hday]', tr).value, $('[name=htime]', tr).value]; }) };

@@ -70,13 +70,14 @@ PUT /admin/products/:id — FULL product body as above; variations must include 
 DELETE /admin/products/:id
 POST /admin/stock — {changes:[{variation_id, stock}]} (stock = whole number, or "" to unset)
 POST /admin/categories {name} · PUT /admin/categories/:id {name, visible, sort} · DELETE /admin/categories/:id
-POST /admin/orders/:id/status {status:"processing"|"ready_for_pickup"|"shipped"|"completed", carrier, tracking} — ready_for_pickup and shipped email the customer
+POST /admin/orders/:id/status {status:"processing"|"ready_for_pickup"|"shipped"|"completed", eta_date:"YYYY-MM-DD" (REQUIRED for shipped: the day the customer gets it), eta_note, carrier, tracking} — ready_for_pickup and shipped email the customer (shipped email shows item photos + arrival day)
+POST /admin/orders/:id/eta {eta_date:"YYYY-MM-DD", eta_note, carrier, tracking} — change the delivery day of a shipped order; emails the customer the new day
 POST /admin/orders/:id/paid-in-store {method:"cash"|"card"|"other"} — pay-at-pickup order paid at the counter, completes it
 POST /admin/orders/:id/cancel-unpaid {reason} — unpaid pay-at-pickup order; puts items back in stock
 POST /admin/orders/:id/note {note}
 POST /admin/orders/:id/refund {full:true | amount:"5.00", reason, itemIds:[...], restock:bool, cancel:bool} — real money back through Square
 POST /admin/orders/:id/items/:iid/unavailable · POST /admin/orders/:id/items/:iid/substitute {variation_id, message} · POST /admin/orders/:id/items/:iid/remove
-POST /admin/orders/:id/resend {kind:"customer_confirmation"|"ready_for_pickup"|"shipped"}
+POST /admin/orders/:id/resend {kind:"customer_confirmation"|"ready_for_pickup"|"shipped"|"delivery_update"}
 POST /admin/substitutions/:id/withdraw · POST /admin/alerts/:id/resolve
 POST /admin/invites {name, email, days, full, perms:[...]} · PUT /admin/staff/:id {perms:[...]|role|active|password}
 POST /admin/square/push · POST /admin/square/pull-stock · POST /admin/square/disconnect · POST /admin/products/:id/sync
@@ -176,6 +177,10 @@ export function ruleCheck(kind, d, ctx) {
     if (!on('pickup_enabled') && on('pay_in_store_enabled')) add('warn', '"Pay at the store" only works with pickup, and pickup is off.', 'Turn pickup back on, or ignore this.');
     if (Number(s.pickup_hold_days) > 14) add('warn', `Holding unpaid pickup orders for ${s.pickup_hold_days} days keeps those items off the shelf a long time.`, 'Most stores hold 2–5 days.');
     if (s.shipping_free_over_cents && shipRates && s.shipping_mode !== 'tiers' && Number(String(s.shipping_free_over_cents).replace(/[$,]/g, '')) <= Number(String(s.shipping_flat_cents).replace(/[$,]/g, ''))) add('warn', 'The free-shipping minimum is lower than the shipping price itself, so almost every order ships free.', 'Raise the free-shipping minimum (e.g. $50).');
+    if (on('shipping_enabled') && !String(s.shipping_time_text || '').trim()) add('warn', 'Delivery is on, but there is no delivery time — customers won\'t know roughly when their order arrives.', 'Fill in "How long does delivery take?" (e.g. Usually arrives in 3–5 business days).', { shipping_time_text: 'Usually arrives in 3–5 business days.' });
+    { const nums = (String(s.shipping_time_text || '').match(/\d+/g) || []).map(Number).filter((n) => n > 0 && n <= 60), dd = Number(s.delivery_days);
+      if (on('shipping_enabled') && nums.length && dd && (dd > Math.max(...nums) || dd < Math.min(...nums))) add('warn', `The delivery time customers see ("${s.shipping_time_text}") doesn't match the usual ${dd} business days used to pre-fill the arrival day.`, 'Make them agree — change one of them.', { delivery_days: String(Math.max(...nums)) }); }
+    if (on('pickup_enabled') && !String(s.pickup_ready_text || '').trim()) add('warn', 'Pickup is on, but there is no "when is it ready" text for customers.', 'Fill it in (e.g. Usually ready within 2 hours during store hours).', { pickup_ready_text: 'Usually ready within 2 hours during store hours.' });
     if (!String(s.store_email || '').trim()) add('warn', 'No email for new-order alerts — nobody gets notified when an order comes in.', 'Add Nathan\'s email under Store contact.');
     const mq = Array.isArray(s.marquee_items) ? s.marquee_items.filter((x) => String(x).trim()) : null;
     if (mq && !mq.length) add('warn', 'The rolling banner has no words, so it will keep the old ones.', 'Add at least one line.');

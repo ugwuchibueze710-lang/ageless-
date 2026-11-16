@@ -51,6 +51,11 @@ const MIGRATIONS = [
   `ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'card';
    ALTER TABLE orders ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE order_items ADD COLUMN list_cents INTEGER`,
+  // v4 — delivery date the admin promises when an order ships
+  `ALTER TABLE orders ADD COLUMN eta_date TEXT;
+   ALTER TABLE orders ADD COLUMN eta_note TEXT;
+   UPDATE settings SET v = 'Usually arrives in 3–5 business days.' WHERE k = 'shipping_time_text' AND v = 'Ships in 1–2 business days.';
+   UPDATE settings SET v = 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715.' WHERE k = 'pickup_instructions' AND v = 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715. We will email you when your order is ready.'`,
 ];
 
 // The 11 items already on the site: photos cut from the store's own Google photos.
@@ -77,12 +82,12 @@ const DEFAULT_SETTINGS = {
   shipping_enabled: '1', pickup_enabled: '1',
   shipping_mode: 'flat', shipping_flat_cents: '', shipping_free_over_cents: '', shipping_tiers: '[]',
   shipping_note: 'Ships within the United States only.',
-  pickup_instructions: 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715. We will email you when your order is ready.',
+  pickup_instructions: 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715.',
   store_name: 'Ageless', store_email: '', store_phone: '(317) 599-2537',
   hold_minutes: '10',
   pay_in_store_enabled: '1',
   pickup_ready_text: 'Usually ready within 2 hours during store hours.',
-  shipping_time_text: 'Ships in 1–2 business days.',
+  shipping_time_text: 'Usually arrives in 3–5 business days.', delivery_days: '4',
   pickup_hold_days: '3',
   site_announcement: '',
   marquee_items: JSON.stringify(['Plush', 'Light-Up Ear Hats', 'Anime Figures', 'Keychains', 'Shoe Charms', 'Wall Scrolls', 'Squishies']),

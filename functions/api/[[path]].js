@@ -50,6 +50,7 @@ async function activity(env, st, action, detail, request, path) {
 const DESCRIBE = [
   ['GET', /^\/admin\/orders\/(\d+)$/, (m) => `Viewed order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/status$/, (m) => `Changed status of order #${m[1]}`],
+  ['POST', /^\/admin\/orders\/(\d+)\/eta$/, (m) => `Changed the delivery date of order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/note$/, (m) => `Added a note to order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/refund$/, (m) => `Refunded order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/items\/\d+\/unavailable$/, (m) => `Marked an item unavailable in order #${m[1]}`],
@@ -293,6 +294,15 @@ async function linkToken(env, code) {
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(code)));
   return btoa(String.fromCharCode(...sig)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 32);
 }
+// Delivery day the store promises: YYYY-MM-DD, from yesterday (time zones) up to 90 days out.
+function etaDate(v) {
+  const d = String(v || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(Date.parse(d + 'T12:00:00Z'))) fail(400, 'Pick the day the customer will get the order.');
+  const t = Date.parse(d + 'T12:00:00Z'), now = Date.now();
+  if (t < now - 2 * 864e5) fail(400, 'That delivery day is in the past.');
+  if (t > now + 90 * 864e5) fail(400, 'That delivery day is more than 90 days away.');
+  return d;
+}
 async function customerLink(env, site, code) { return orderLink(site, code, await linkToken(env, code)); }
 async function orderByToken(env, codeParam, tok) {
   const o = await loadOrder(env, 'code', str(codeParam, 20));
@@ -358,7 +368,7 @@ on('GET', '/orders/:code', async ({ env, params, url, request }) => {
     code: o.code, status: o.status, fulfillment: o.fulfillment, name: o.name, created_at: o.created_at, paid_at: o.paid_at,
     pay_at_pickup: o.payment_method === 'store', discount_cents: o.discount_cents, ready_text: o.fulfillment === 'pickup' ? s.pickup_ready_text : s.shipping_time_text, hold_days: Number(s.pickup_hold_days) || 3,
     subtotal_cents: o.subtotal_cents, shipping_cents: o.shipping_cents, tax_cents: o.tax_cents, total_cents: o.total_cents, refunded_cents: o.refunded_cents,
-    tracking_carrier: o.tracking_carrier, tracking_number: o.tracking_number, card: o.card_last4 ? `${o.card_brand || 'Card'} ending ${o.card_last4}` : null,
+    tracking_carrier: o.tracking_carrier, tracking_number: o.tracking_number, eta_date: o.eta_date || null, eta_note: o.eta_note || null, card: o.card_last4 ? `${o.card_brand || 'Card'} ending ${o.card_last4}` : null,
     address: o.fulfillment === 'shipping' ? { street: o.ship_street, street2: o.ship_street2, city: o.ship_city, state: o.ship_state, zip: o.ship_zip } : null,
     pickup_instructions: o.fulfillment === 'pickup' ? s.pickup_instructions : null,
     items: o.items.map((i) => ({ name: i.name, variation_name: i.variation_name, qty: i.qty, unit_cents: i.unit_cents, list_cents: i.list_cents, image_url: i.image_url, status: i.status, original_name: i.original_name })),
@@ -802,6 +812,7 @@ on('GET', '/admin/orders/:id', async ({ env, request, params }) => {
   o.events = (await env.DB.prepare('SELECT actor, action, detail, at FROM order_events WHERE order_id = ? ORDER BY id DESC').bind(o.id).all()).results;
   o.substitutions = (await env.DB.prepare('SELECT id, order_item_id, new_name, new_image_url, unit_cents, status, created_at, responded_at FROM substitutions WHERE order_id = ? ORDER BY id DESC').bind(o.id).all()).results;
   o.emails = (await env.DB.prepare('SELECT id, to_email, subject, status, created_at FROM outbox WHERE order_id = ? ORDER BY id DESC').bind(o.id).all()).results;
+  o.delivery_days = Number((await getSettings(env)).delivery_days) || 4;
   return json({ order: o });
 });
 on('POST', '/admin/orders/:id/status', async ({ env, request, params }) => {
@@ -815,12 +826,26 @@ on('POST', '/admin/orders/:id/status', async ({ env, request, params }) => {
   if (to === 'completed' && o.payment_method === 'store' && !o.paid_at) fail(400, 'This order is not paid yet. Use "Paid & picked up" when the customer pays at the counter.');
   if (o.items.some((i) => i.status === 'awaiting_approval' || i.status === 'unavailable') && ['ready_for_pickup', 'shipped', 'completed'].includes(to)) fail(400, 'Resolve the unavailable item first (substitute or refund).');
   const carrier = str(b.carrier, 40) || null, tracking = str(b.tracking, 60) || null;
-  await env.DB.prepare('UPDATE orders SET status = ?, tracking_carrier = COALESCE(?, tracking_carrier), tracking_number = COALESCE(?, tracking_number), updated_at = ? WHERE id = ?').bind(to, carrier, tracking, nowIso(), o.id).run();
-  await event(env, o.id, me.email, 'status', `${o.status} → ${to}${tracking ? ' (' + (carrier || '') + ' ' + tracking + ')' : ''}`);
+  const eta = to === 'shipped' ? etaDate(b.eta_date) : null, etaNote = to === 'shipped' ? (str(b.eta_note, 200) || null) : null;
+  await env.DB.prepare('UPDATE orders SET status = ?, tracking_carrier = COALESCE(?, tracking_carrier), tracking_number = COALESCE(?, tracking_number), eta_date = COALESCE(?, eta_date), eta_note = COALESCE(?, eta_note), updated_at = ? WHERE id = ?').bind(to, carrier, tracking, eta, etaNote, nowIso(), o.id).run();
+  await event(env, o.id, me.email, 'status', `${o.status} → ${to}${eta ? ' · arriving ' + eta : ''}${tracking ? ' (' + (carrier || '') + ' ' + tracking + ')' : ''}`);
   const fresh = await loadOrder(env, 'id', o.id), site = siteUrl(request, env);
   if (to === 'ready_for_pickup') await notify(env, 'ready_for_pickup', fresh, fresh.items, { link: await customerLink(env, site, o.code) });
   if (to === 'shipped') await notify(env, 'shipped', fresh, fresh.items, { link: await customerLink(env, site, o.code) });
   return json({ ok: true });
+});
+// Change the promised delivery day (or tracking) after an order has shipped; emails the customer.
+on('POST', '/admin/orders/:id/eta', async ({ env, request, params }) => {
+  const me = await requireStaff(env, request, 'orders'); const b = await readJson(request);
+  const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
+  if (o.fulfillment !== 'shipping' || o.status !== 'shipped') fail(400, 'You can change the delivery date only on a shipped delivery order.');
+  const eta = etaDate(b.eta_date), note = str(b.eta_note, 200) || null;
+  const carrier = str(b.carrier, 40) || null, tracking = str(b.tracking, 60) || null;
+  await env.DB.prepare('UPDATE orders SET eta_date = ?, eta_note = ?, tracking_carrier = COALESCE(?, tracking_carrier), tracking_number = COALESCE(?, tracking_number), updated_at = ? WHERE id = ?').bind(eta, note, carrier, tracking, nowIso(), o.id).run();
+  await event(env, o.id, me.email, 'eta', `Delivery date ${o.eta_date || '(none)'} → ${eta}`);
+  const fresh = await loadOrder(env, 'id', o.id);
+  const sent = b.notify === false ? 'skipped' : await notify(env, 'delivery_update', fresh, fresh.items, { link: await customerLink(env, siteUrl(request, env), o.code) });
+  return json({ ok: true, email: sent });
 });
 on('POST', '/admin/orders/:id/items/:iid/remove', async ({ env, request, params }) => {
   const me = await requireStaff(env, request, 'orders');
@@ -948,7 +973,7 @@ on('POST', '/admin/substitutions/:id/withdraw', async ({ env, request, params })
 on('POST', '/admin/orders/:id/resend', async ({ env, request, params }) => {
   await requireStaff(env, request, 'orders'); const b = await readJson(request);
   const o = await loadOrder(env, 'id', int(params.id, 1)); if (!o) fail(404, 'Order not found');
-  const kind = ['customer_confirmation', 'ready_for_pickup', 'shipped'].includes(b.kind) ? b.kind : 'customer_confirmation';
+  const kind = ['customer_confirmation', 'ready_for_pickup', 'shipped', 'delivery_update'].includes(b.kind) ? b.kind : 'customer_confirmation';
   return json({ status: await notify(env, kind, o, o.items, { link: await customerLink(env, siteUrl(request, env), o.code) }) });
 });
 
@@ -1123,7 +1148,7 @@ on('DELETE', '/admin/categories/:id', async ({ env, request, params }) => {
 // ADMIN — settings & Square
 // ======================================================================
 const EDITABLE = ['shipping_enabled', 'pickup_enabled', 'shipping_mode', 'shipping_flat_cents', 'shipping_free_over_cents', 'shipping_tiers', 'shipping_note', 'pickup_instructions', 'store_email', 'store_phone', 'hold_minutes',
-  'pay_in_store_enabled', 'pickup_ready_text', 'shipping_time_text', 'pickup_hold_days', 'site_announcement', 'marquee_items', 'store_address', 'store_hours',
+  'pay_in_store_enabled', 'pickup_ready_text', 'shipping_time_text', 'delivery_days', 'pickup_hold_days', 'site_announcement', 'marquee_items', 'store_address', 'store_hours',
   'sale_enabled', 'sale_percent', 'sale_category_id', 'sale_label', 'sale_ends'];
 on('GET', '/admin/settings', async ({ env, request }) => {
   await requireStaff(env, request, 'settings');
@@ -1152,6 +1177,7 @@ on('PUT', '/admin/settings', async ({ env, request }) => {
     else if (k === 'sale_ends') { v = str(v, 10); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) fail(400, 'Sale end date must be a date.'); }
     else if (k === 'site_announcement' || k === 'sale_label') v = str(v, 140);
     else if (k === 'pickup_ready_text' || k === 'shipping_time_text') v = str(v, 160);
+    else if (k === 'delivery_days') { const n = int(v); if (n == null || n < 1 || n > 30) fail(400, 'Usual delivery time must be 1–30 business days.'); v = String(n); }
     else v = text(v, 1000);
     await setSetting(env, k, v);
   }

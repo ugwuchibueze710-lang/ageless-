@@ -2,6 +2,18 @@
 // order details are never translated.
 (function () {
   var HE = {
+    // delivery day + emails
+    'Shipped — on its way': 'נשלח — בדרך ללקוח', 'Arriving': 'מגיע ב', 'Change delivery date': 'שינוי יום המסירה', 'Change delivery date…': 'שינוי יום המסירה…',
+    'Emails the customer the new day': 'שולח ללקוח אימייל עם היום החדש', 'Customer gets it on': 'הלקוח יקבל את זה ב',
+    'The customer gets an email with a photo of each item and the day it arrives.': 'הלקוח יקבל אימייל עם תמונה של כל פריט ועם היום שבו ההזמנה תגיע.',
+    'The customer gets an email with the new day.': 'הלקוח יקבל אימייל עם היום החדש.',
+    'Message to the customer (optional)': 'הודעה ללקוח (לא חובה)', 'e.g. Delivered by USPS, usually by 5 PM': 'למשל: נמסר ע"י USPS, בדרך כלל עד 17:00',
+    'Carrier (optional)': 'חברת משלוחים (לא חובה)', 'Tracking number (optional)': 'מספר מעקב (לא חובה)', 'Save & email customer': 'שמירה ושליחת אימייל ללקוח',
+    'Marked shipped — customer emailed': 'סומן כנשלח — נשלח אימייל ללקוח', 'Delivery date updated — customer emailed': 'יום המסירה עודכן — נשלח אימייל ללקוח',
+    'Resend "ready" email': 'שליחה חוזרת של אימייל "מוכן"', 'Resend "on its way" email': 'שליחה חוזרת של אימייל "בדרך"',
+    'How long does delivery take? (shown at checkout and in the confirmation email)': 'כמה זמן לוקח המשלוח? (מוצג בתשלום ובאימייל האישור)',
+    'e.g. Usually arrives in 3–5 business days': 'למשל: מגיע בדרך כלל תוך 3–5 ימי עסקים',
+    'Usual delivery time in business days (pre-fills the arrival day when you mark an order shipped)': 'זמן משלוח רגיל בימי עסקים (ממלא מראש את יום ההגעה כשמסמנים הזמנה כנשלחה)',
     // navigation + shell
     'Admin': 'ניהול', 'Ageless Admin': 'ניהול Ageless', 'Home': 'ראשי', 'Orders': 'הזמנות', 'Products': 'מוצרים', 'Quantities': 'כמויות', 'Qty': 'כמויות',
     'Categories': 'קטגוריות', 'Settings': 'הגדרות', 'Staff': 'צוות', 'Emails': 'אימיילים', 'More': 'עוד', 'Log out': 'התנתקות',
@@ -141,6 +153,7 @@
     'Language': 'שפה',
   };
   var R = [
+    [/^Email will say: Arriving (.+)$/, 'האימייל יגיד: מגיע ב-$1'],
     [/^(.+) · (owner|employee)$/, function (m) { return m[1] + ' · ' + (m[2] === 'owner' ? 'בעלים' : 'עובד'); }],
     [/^(\d+) in stock$/, '$1 במלאי'],
     [/^order #(\d+)$/, 'הזמנה #$1'],
