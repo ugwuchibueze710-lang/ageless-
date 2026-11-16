@@ -24,7 +24,7 @@
     <a href="#/staff" data-nav="staff" data-perm="staff">Staff</a>
     <a href="#/outbox" data-nav="outbox" data-perm="orders">Emails</a>
   </nav>
-  <div class="who"><span id="whoName"></span><button class="link" id="logoutBtn">Log out</button></div>
+  <div class="who"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><span id="whoName"></span><button class="link" id="logoutBtn">Log out</button></div>
 </header>
 <main id="app" aria-live="polite"><p class="muted center pad">Loading…</p></main>
 <nav class="tabbar" id="tabbar" hidden>
@@ -41,6 +41,8 @@
   <div class="ai-log" id="aiLog"></div>
   <form class="ai-in" id="aiForm"><textarea id="aiQ" rows="2" placeholder="Ask or tell me what to do… e.g. “Put keychains 50% off until Sunday”"></textarea><button class="btn primary" id="aiSend">Send</button></form>
 </aside>
+<script src="/assets/i18n.js"></script>
+<script src="/admin/i18n-admin.js"></script>
 <script src="/admin/admin.js"></script>
 </body>
 </html>

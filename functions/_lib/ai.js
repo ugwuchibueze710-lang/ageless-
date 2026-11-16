@@ -7,6 +7,7 @@
 //    browser sends them to /admin/ai/apply, which again runs them through the normal router as that person.
 //  - Risky changes (refunds, cancels, deletes, staff access, Square disconnect…) need an extra "Yes, I'm sure".
 import { getSettings } from './db.js';
+import { log } from './util.js';
 
 export const aiConfigured = (env) => !!env.GROQ_API_KEY;
 const MODEL = (env) => env.GROQ_MODEL || 'openai/gpt-oss-120b';
@@ -116,7 +117,7 @@ async function groq(env, messages, opts = {}) {
   try {
     const r = await fetch((env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1') + '/chat/completions', { method: 'POST', signal: ctl.signal,
       headers: { Authorization: 'Bearer ' + env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL(env), messages, temperature: 0.2, max_tokens: opts.max || 1200, ...(opts.tools ? { tools: opts.tools, tool_choice: 'auto' } : {}), ...(opts.json ? { response_format: { type: 'json_object' } } : {}) }) });
+      body: JSON.stringify({ model: MODEL(env), messages, temperature: 0.2, max_tokens: opts.max || 1500, ...(/gpt-oss/.test(MODEL(env)) ? { reasoning_effort: opts.effort || 'low' } : {}), ...(opts.tools ? { tools: opts.tools, tool_choice: 'auto' } : {}), ...(opts.json ? { response_format: { type: 'json_object' } } : {}) }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error?.message || `AI service error ${r.status}`);
     return j.choices[0].message;
@@ -203,8 +204,9 @@ export async function aiReview(env, kind, data, ctx, issues) {
     const m = await groq(env, [
       { role: 'system', content: 'You review a store admin change before it is saved, for an anime/plush shop. Find contradictions, mistakes or risky setups that the listed automatic checks missed. Be conservative: only report real problems a shop owner would want to know. Reply ONLY with JSON: {"issues":[{"level":"error"|"warn","message":"plain English","fix":"suggested fix"}],"note":"one short line"}. Return {"issues":[]} if nothing is wrong. Never repeat an issue already listed.' },
       { role: 'user', content: `Change type: ${kind}\nNew values: ${trim(data, 3000)}\nCurrent context: ${trim(ctx, 2500)}\nAlready found: ${trim(issues.map((i) => i.message), 1500)}` },
-    ], { json: true, timeout: 9000, max: 500 });
-    const j = JSON.parse(m.content || '{}');
+    ], { timeout: 12000, max: 1200 });
+    const raw = String(m.content || ''), hit = raw.match(/\{[\s\S]*\}/);
+    const j = hit ? JSON.parse(hit[0]) : { issues: [] };
     return { issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map((i) => ({ level: i.level === 'error' ? 'error' : 'warn', message: String(i.message || '').slice(0, 300), fix: i.fix ? String(i.fix).slice(0, 300) : null, ai: true })).filter((i) => i.message), note: j.note ? String(j.note).slice(0, 200) : null };
-  } catch { return null; }
+  } catch (e) { await log(env, 'warn', 'AI review failed', { e: String(e) }); return null; }
 }

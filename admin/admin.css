@@ -121,3 +121,14 @@ table.simple td,table.simple th{padding:8px 6px;border-bottom:1px solid var(--li
 .issues{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:10px}
 .issues li{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2)}
 .issues li.error{border-color:rgba(255,122,138,.55)}.issues li.warn{border-color:rgba(255,207,107,.45)}
+
+/* ---------- language toggle + Hebrew (right-to-left) ---------- */
+.lang-toggle{font-weight:700;margin-inline-end:12px}
+.login .lang-toggle{float:inline-end;margin:0}
+html[dir="rtl"] body{font-family:"Rubik","Segoe UI","Arial Hebrew",Arial,sans-serif}
+html[dir="rtl"] .ai-fab{right:auto;left:16px}
+html[dir="rtl"] .ai-panel{right:auto;left:0;border-left:0;border-right:1px solid rgba(225,212,255,.3)}
+html[dir="rtl"] .ai-msg.u{border-bottom-right-radius:14px;border-bottom-left-radius:4px}
+html[dir="rtl"] .ai-msg.a{border-bottom-left-radius:14px;border-bottom-right-radius:4px}
+html[dir="rtl"] .right{text-align:left}
+html[dir="rtl"] input[type=email],html[dir="rtl"] input[type=tel],html[dir="rtl"] input[inputmode]{direction:ltr;text-align:right}

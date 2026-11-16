@@ -323,3 +323,23 @@ body.page{min-height:100vh;display:flex;flex-direction:column}
 .dr-total.save b{color:#c9f7d8}
 #payWay[hidden],.soon[hidden],#sqNote[hidden]{display:none}
 .soon{background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.25);border-radius:10px;padding:10px 12px;text-align:left}
+
+/* ---------- language picker + right-to-left ---------- */
+.lang-slot{position:relative;margin-left:auto;margin-right:10px}
+.lang-btn{display:flex;align-items:center;gap:4px;height:40px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(20,10,32,.6);color:#fff;font:inherit;font-size:13px;cursor:pointer}
+.lang-btn:hover{border-color:var(--pink);box-shadow:0 0 12px rgba(225,212,255,.35)}
+.lang-menu{position:absolute;right:0;top:46px;z-index:90;list-style:none;margin:0;padding:6px;min-width:150px;background:#16131e;border:1px solid rgba(225,212,255,.3);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.lang-menu[hidden]{display:none}
+.lang-menu button{display:block;width:100%;text-align:start;padding:9px 12px;border:0;border-radius:9px;background:none;color:#fff;font:inherit;font-size:15px;cursor:pointer}
+.lang-menu button:hover,.lang-menu button[aria-checked="true"]{background:rgba(255,255,255,.1)}
+.lang-menu button[aria-checked="true"]::after{content:" ✓"}
+.pg-head{display:flex;align-items:center;justify-content:center;gap:12px;position:relative}
+.pg-head .lang-slot{position:absolute;right:4vw;margin:0}
+html[dir="rtl"] .lang-slot{margin-left:10px;margin-right:auto}
+html[dir="rtl"] .lang-menu{right:auto;left:0}
+html[dir="rtl"] .pg-head .lang-slot{right:auto;left:4vw}
+html[dir="rtl"] body{font-family:"Rubik","Segoe UI","Arial Hebrew",Arial,sans-serif}
+html[dir="rtl"] .hero,html[dir="rtl"] .neon-wrap,html[dir="rtl"] .marquee,html[dir="rtl"] .mq-track{direction:ltr}
+html[dir="rtl"] .hero-copy{direction:rtl}
+html[dir="rtl"] .badge-st{left:auto;right:12px}html[dir="rtl"] .badge-st.feat{right:auto;left:12px}
+@media (max-width:480px){.nav{gap:12px}.nav-links{gap:12px}.nav-links a{font-size:13px}.lang-slot{margin-right:6px}.lang-btn{padding:0 9px;height:36px}}

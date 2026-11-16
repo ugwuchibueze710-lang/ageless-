@@ -77,7 +77,8 @@
     log.innerHTML = (AI.msgs.length ? '' : '<div class="ai-msg a">Hi ' + esc(me ? me.name.split(' ')[0] : '') + '! I can look things up and make changes for you — sales, prices, quantities, orders, settings, the website banner, staff. I always show you exactly what I\'ll change and wait for you to tap Confirm.\n\nTry: “What sold today?”, “Put keychains 50% off until Sunday”, “Which items are out of stock?”</div>') +
       AI.msgs.map(function (m, i) {
         if (m.role === 'sys') return '<div class="ai-msg sys">' + esc(m.content) + '</div>';
-        var h = '<div class="ai-msg ' + (m.role === 'user' ? 'u' : 'a') + '">' + esc(m.content) + '</div>';
+        var body = esc(m.content); if (m.role !== 'user') body = body.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/^#+\s*/gm, '');
+        var h = '<div class="ai-msg ' + (m.role === 'user' ? 'u' : 'a') + '">' + body + '</div>';
         if (m.proposals && m.proposals.length) {
           var risky = m.proposals.some(function (p) { return p.risk; });
           h += '<div class="ai-props"><h4>' + (m.done ? (m.done === 'applied' ? '✓ Applied' : 'Not applied') : 'Ready to change') + '</h4><ol>' + m.proposals.map(function (p) { return '<li>' + esc(p.summary) + (p.risk ? '<span class="risk">⚠ ' + esc(p.risk) + '</span>' : '') + (p.result ? '<span class="' + (p.result.ok ? 'muted' : 'risk') + ' small"> — ' + (p.result.ok ? 'done' : esc(p.result.error)) + '</span>' : '') + '</li>'; }).join('') + '</ol>' +
@@ -146,12 +147,17 @@
     (views[v] || viewHome)();
   }
   aiInit();
+  // language switch (English / Hebrew) — anywhere a [data-lang-toggle] button appears
+  function langLabels() { $$('[data-lang-toggle]').forEach(function (b) { var t = ADMIN_I18N.lang === 'he' ? 'English' : 'עברית'; if (b.textContent !== t) b.textContent = t; }); }
+  document.addEventListener('click', function (e) { if (!e.target.closest('[data-lang-toggle]')) return; ADMIN_I18N.set(ADMIN_I18N.lang === 'he' ? 'en' : 'he'); langLabels(); });
+  new MutationObserver(langLabels).observe(document.body, { childList: true, subtree: true });
+  langLabels();
   window.addEventListener('hashchange', route);
   $('#logoutBtn').addEventListener('click', function () { api('/admin/logout', { method: 'POST' }).finally(function () { me = null; go('#/login'); }); });
 
   // ---------------- login / setup ----------------
   function viewLogin() {
-    app.innerHTML = '<div class="login card"><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Admin login</h1>' +
+    app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Admin login</h1>' +
       '<form class="form" id="f"><label>Email<input name="email" type="email" autocomplete="username" required></label>' +
       '<label>Password<input name="password" type="password" autocomplete="current-password" required></label>' +
       '<button class="btn primary big">Log in</button></form></div>';
@@ -163,7 +169,7 @@
     });
   }
   function viewSetup(b) {
-    app.innerHTML = '<div class="login card"><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Create the owner account</h1>' +
+    app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Create the owner account</h1>' +
       (b.setupKeyConfigured ? '' : '<p class="alert bad">The server has no setup key yet (ADMIN_SETUP_KEY). Ask your developer to add it.</p>') +
       '<p class="muted small">This only works once. Use the setup key your developer gave you.</p>' +
       '<form class="form" id="f"><label>Setup key<input name="setupKey" required autocomplete="off"></label>' +
@@ -644,13 +650,13 @@
   function viewJoin() {
     var t = new URLSearchParams(location.hash.split('?')[1] || '').get('t') || '';
     api('/admin/join/' + encodeURIComponent(t)).then(function (i) {
-      app.innerHTML = '<div class="login card"><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Join the Ageless team</h1>' +
+      app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Join the Ageless team</h1>' +
         '<p class="muted small">You\'re invited with ' + (i.full ? '<b>full access</b>.' : 'access to:</p><ul class="small" style="margin:0 0 10px 18px">' + i.perms.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul><p class="muted small">') + ' Set up your login below.</p>' +
         '<form class="form" id="jf"><label>Your name<input name="name" required value="' + esc(i.name || '') + '"></label><label>Email<input name="email" type="email" required autocomplete="username" value="' + esc(i.email || '') + '"' + (i.email ? ' readonly' : '') + '></label>' +
         '<label>Choose a password (10+ characters)<input name="password" type="password" minlength="10" required autocomplete="new-password"></label><button class="btn primary big">Create my login</button></form></div>';
       $('#jf').onsubmit = function (e) { e.preventDefault(); var f = e.target;
         act(f.querySelector('button'), api('/admin/join/' + encodeURIComponent(t), { method: 'POST', body: { name: f.name.value, email: f.email.value, password: f.password.value } }), 'Welcome!').then(function () { me = null; go('#/'); }); };
-    }).catch(function (e) { app.innerHTML = '<div class="login card"><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><p class="alert bad">' + esc(e.message) + '</p><a class="btn" href="#/login">Go to login</a></div>'; });
+    }).catch(function (e) { app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><p class="alert bad">' + esc(e.message) + '</p><a class="btn" href="#/login">Go to login</a></div>'; });
   }
 
   // ---------------- emails / log / more ----------------

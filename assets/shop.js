@@ -88,6 +88,9 @@
       burst(ex,ey);
     }
     requestAnimationFrame(step);
+    // safety: if the tab is hidden mid-flight (animations pause), still put the item in the cart
+    var landed=false, _land=land; land=function(){ if(landed) return; landed=true; _land(); };
+    setTimeout(function(){ if(!landed){ f.remove(); land(); } }, dur+600);
     if(restockEl) setTimeout(function(){ img.classList.remove('leave'); void img.offsetWidth; img.classList.add('restock');
       restockEl.classList.remove('flash'); void restockEl.offsetWidth; restockEl.classList.add('flash'); }, 520);
   }
