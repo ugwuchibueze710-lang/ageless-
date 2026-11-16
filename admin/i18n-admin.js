@@ -2,6 +2,22 @@
 // order details are never translated.
 (function () {
   var HE = {
+    // Natan's login + setup link
+    'Type your password to open the store admin.': 'כתוב את הסיסמה שלך כדי לפתוח את ניהול החנות.', 'Name': 'שם',
+    'You stay logged in on this device until you tap Log out.': 'אתה נשאר מחובר במכשיר הזה עד שתלחץ התנתקות.',
+    "Your account is ready, but you haven't made your password yet. Open the special link Israel sent you to make it.": 'החשבון שלך מוכן, אבל עוד לא בחרת סיסמה. פתח את הקישור המיוחד שישראל שלח לך כדי לבחור אותה.',
+    'Staff login (employees)': 'כניסת צוות (עובדים)', 'Staff login': 'כניסת צוות',
+    'Checking your link…': 'בודקים את הקישור שלך…', "This link doesn't work anymore": 'הקישור הזה כבר לא עובד',
+    'It was already used, or it is more than 7 days old. Ask Israel to send you a new one.': 'כבר השתמשו בו, או שעברו יותר מ-7 ימים. בקש מישראל לשלוח לך קישור חדש.',
+    'Go to login': 'למסך הכניסה', 'Make a new password for your store admin.': 'בחר סיסמה חדשה לניהול החנות שלך.',
+    'Welcome to your store admin! Make a password now. You only do this once.': 'ברוך הבא לניהול החנות שלך! בחר עכשיו סיסמה. עושים את זה רק פעם אחת.',
+    'New password': 'סיסמה חדשה', 'Type it again': 'כתוב אותה שוב', 'Save my password': 'שמירת הסיסמה שלי', 'Password saved. Welcome!': 'הסיסמה נשמרה. ברוך הבא!',
+    'The two passwords are not the same. Type them again.': 'שתי הסיסמאות לא זהות. כתוב אותן שוב.',
+    'Something went wrong. Check your internet and open the link again.': 'משהו השתבש. בדוק את האינטרנט ופתח את הקישור שוב.',
+    'That password is not correct.': 'הסיסמה לא נכונה.', 'This link has expired or was already used. Ask Israel for a new one.': 'הקישור פג או שכבר השתמשו בו. בקש מישראל קישור חדש.',
+    "Natan's account can't be changed here.": 'אי אפשר לשנות כאן את החשבון של נתן.', 'Password must be at least 10 characters.': 'הסיסמה צריכה להיות לפחות 10 תווים.',
+    'Store owner': 'בעל החנות', 'Developer (Israel)': 'מפתח (ישראל)', 'Password not made yet': 'עוד לא נבחרה סיסמה', "Natan's setup link": 'קישור ההגדרה של נתן',
+    'Link copied': 'הקישור הועתק', 'Select the link and copy it': 'סמן את הקישור והעתק אותו', 'Welcome guide (Square + workers)': 'מדריך התחלה (Square + עובדים)', 'Close': 'סגירה',
     // delivery day + emails
     'Shipped — on its way': 'נשלח — בדרך ללקוח', 'Arriving': 'מגיע ב', 'Change delivery date': 'שינוי יום המסירה', 'Change delivery date…': 'שינוי יום המסירה…',
     'Emails the customer the new day': 'שולח ללקוח אימייל עם היום החדש', 'Customer gets it on': 'הלקוח יקבל את זה ב',
@@ -153,6 +169,8 @@
     'Language': 'שפה',
   };
   var R = [
+    [/^Hello (.+)$/, 'שלום $1'],
+    [/^← Back to (.+)'s login$/, '← חזרה לכניסה של $1'],
     [/^Email will say: Arriving (.+)$/, 'האימייל יגיד: מגיע ב-$1'],
     [/^(.+) · (owner|employee)$/, function (m) { return m[1] + ' · ' + (m[2] === 'owner' ? 'בעלים' : 'עובד'); }],
     [/^(\d+) in stock$/, '$1 במלאי'],

@@ -2,7 +2,7 @@
 import { json, fail, HttpError, readJson, str, text, int, isEmail, isPhone, isZip, US_STATES, slugify, dollarsToCents, clientIp,
   code as makeCode, token as makeToken, sha256Hex, timingSafeEqual, nowIso, money, limitOr429, log, siteUrl } from '../_lib/util.js';
 import { ensureSchema, getSettings, setSetting, salePercent, salePrice } from '../_lib/db.js';
-import { hashPassword, verifyPassword, passwordProblem, createSession, clearCookie, destroySession, requireStaff, PERMS, permsOf, cleanPerms, OWNER_ONLY_PERMS } from '../_lib/auth.js';
+import { hashPassword, verifyPassword, passwordProblem, createSession, clearCookie, destroySession, requireStaff, PERMS, permsOf, cleanPerms, OWNER_ONLY_PERMS, renewLongSession, longSession } from '../_lib/auth.js';
 import { aiChat, aiReview, ruleCheck, aiConfigured, allowedPath, riskOf } from '../_lib/ai.js';
 import * as sq from '../_lib/square.js';
 import { notify } from '../_lib/email.js';
@@ -48,6 +48,7 @@ async function activity(env, st, action, detail, request, path) {
   } catch { /* never block the request */ }
 }
 const DESCRIBE = [
+  ['POST', /^\/admin\/main-setup-link$/, () => "Created Natan's private setup link"],
   ['GET', /^\/admin\/orders\/(\d+)$/, (m) => `Viewed order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/status$/, (m) => `Changed status of order #${m[1]}`],
   ['POST', /^\/admin\/orders\/(\d+)\/eta$/, (m) => `Changed the delivery date of order #${m[1]}`],
@@ -538,7 +539,9 @@ async function pullLinkedCatalog(env) {
 // ======================================================================
 on('GET', '/admin/bootstrap', async ({ env }) => {
   const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM staff').first();
-  return json({ needsSetup: !n.n, setupKeyConfigured: !!env.ADMIN_SETUP_KEY });
+  const m = await env.DB.prepare("SELECT name, pass_hash FROM staff WHERE kind = 'main' AND active = 1").first();
+  return json({ needsSetup: !n.n, setupKeyConfigured: !!env.ADMIN_SETUP_KEY,
+    main: m ? { name: m.name, first: m.name.split(' ')[0], ready: String(m.pass_hash).startsWith('pbkdf2$') } : null });
 });
 on('POST', '/admin/setup', async ({ env, request }) => {
   await limitOr429(env, request, 'setup', 5, 900);
@@ -557,16 +560,62 @@ on('POST', '/admin/setup', async ({ env, request }) => {
 on('POST', '/admin/login', async ({ env, request }) => {
   await limitOr429(env, request, 'login', 8, 600);
   const b = await readJson(request);
-  const email = str(b.email, 120).toLowerCase();
+  let email = str(b.email, 120).toLowerCase();
+  if (b.main === true) { const m = await env.DB.prepare("SELECT email FROM staff WHERE kind = 'main' AND active = 1").first(); email = m ? m.email : '(none)'; }
   await limitOr429(env, { headers: new Headers({ 'cf-connecting-ip': 'acct:' + email }) }, 'login-acct', 10, 900);
   const st = await env.DB.prepare('SELECT * FROM staff WHERE email = ? AND active = 1').bind(email).first();
   const ok = st ? await verifyPassword(String(b.password || ''), st.pass_hash) : (await hashPassword('x'), false);
-  if (!ok) { await log(env, 'warn', 'Failed admin login', { email }); if (st) await activity(env, st, 'Failed login attempt (wrong password)', null, request); fail(401, 'Email or password is not correct.'); }
+  if (!ok) { await log(env, 'warn', 'Failed admin login', { email }); if (st) await activity(env, st, 'Failed login attempt (wrong password)', null, request); fail(401, b.main === true ? 'That password is not correct.' : 'Email or password is not correct.'); }
   await activity(env, st, 'Logged in', null, request);
   return json({ ok: true, staff: { name: st.name, email: st.email, role: st.role } }, 200, { 'Set-Cookie': await createSession(env, st.id, request) });
 });
 on('POST', '/admin/logout', async ({ env, request }) => { const who = await destroySession(env, request); if (who) await activity(env, who, 'Logged out', null, request); return json({ ok: true }, 200, { 'Set-Cookie': clearCookie() }); });
-on('GET', '/admin/me', async ({ env, request }) => json({ staff: await requireStaff(env, request), permLabels: PERMS }));
+on('GET', '/admin/me', async ({ env, request }) => {
+  const st = await requireStaff(env, request);
+  const headers = longSession(st.kind) ? { 'Set-Cookie': await renewLongSession(env, request) } : {};
+  return json({ staff: st, permLabels: PERMS }, 200, headers);
+});
+// ---- Natan's account: a one-time private link sets (or resets) his password ----
+on('POST', '/admin/main-setup-link', async ({ env, request }) => {
+  const me = await requireStaff(env, request, 'developer');
+  const m = await env.DB.prepare("SELECT id FROM staff WHERE kind = 'main'").first(); if (!m) fail(404, "Natan's account is missing.");
+  const t = makeToken(24), days = 7;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE main_setup SET used_at = ? WHERE used_at IS NULL').bind(nowIso()),
+    env.DB.prepare('INSERT INTO main_setup (token_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?)').bind(await sha256Hex(t), me.id, nowIso(), new Date(Date.now() + days * 864e5).toISOString()),
+  ]);
+  return json({ link: `${siteUrl(request, env)}/admin/#/welcome?t=${t}`, expires_days: days });
+});
+async function mainSetupRow(env, t) {
+  if (!t || String(t).length < 16) return null;
+  return env.DB.prepare('SELECT * FROM main_setup WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').bind(await sha256Hex(String(t)), nowIso()).first();
+}
+on('GET', '/admin/main-setup', async ({ env, request, url }) => {
+  await limitOr429(env, request, 'mainsetup-check', 30, 600);
+  const row = await mainSetupRow(env, url.searchParams.get('t'));
+  const m = await env.DB.prepare("SELECT name, pass_hash FROM staff WHERE kind = 'main'").first();
+  if (!row || !m) return json({ ok: false });
+  return json({ ok: true, name: m.name, first: m.name.split(' ')[0], reset: String(m.pass_hash).startsWith('pbkdf2$') });
+});
+on('POST', '/admin/main-setup', async ({ env, request }) => {
+  await limitOr429(env, request, 'mainsetup', 10, 900);
+  const b = await readJson(request);
+  const row = await mainSetupRow(env, b.token); if (!row) fail(400, 'This link has expired or was already used. Ask Israel for a new one.');
+  const pp = passwordProblem(b.password); if (pp) fail(400, pp);
+  const m = await env.DB.prepare("SELECT id, email FROM staff WHERE kind = 'main'").first();
+  await env.DB.batch([
+    env.DB.prepare('UPDATE staff SET pass_hash = ?, active = 1 WHERE id = ?').bind(await hashPassword(b.password), m.id),
+    env.DB.prepare('DELETE FROM sessions WHERE staff_id = ?').bind(m.id),
+    env.DB.prepare('UPDATE main_setup SET used_at = ? WHERE id = ?').bind(nowIso(), row.id),
+  ]);
+  await activity(env, m, 'Set his password', null, request);
+  return json({ ok: true }, 200, { 'Set-Cookie': await createSession(env, m.id, request) });
+});
+on('POST', '/admin/guide-done', async ({ env, request }) => {
+  const me = await requireStaff(env, request);
+  await env.DB.prepare('UPDATE staff SET guide_done = 1 WHERE id = ?').bind(me.id).run();
+  return json({ ok: true });
+});
 on('POST', '/admin/password', async ({ env, request }) => {
   const me = await requireStaff(env, request); const b = await readJson(request);
   const st = await env.DB.prepare('SELECT pass_hash FROM staff WHERE id = ?').bind(me.id).first();
@@ -579,7 +628,7 @@ on('POST', '/admin/password', async ({ env, request }) => {
 // ---------- staff (owner) ----------
 on('GET', '/admin/staff', async ({ env, request }) => {
   await requireStaff(env, request, 'staff');
-  const rows = (await env.DB.prepare(`SELECT s.id, s.email, s.name, s.role, s.perms, s.active, s.created_at, s.last_login,
+  const rows = (await env.DB.prepare(`SELECT s.id, s.email, s.name, s.role, s.perms, s.active, s.created_at, s.last_login, s.kind, (s.pass_hash LIKE 'pbkdf2$%') AS has_password,
       (SELECT MAX(last_seen) FROM sessions se WHERE se.staff_id = s.id AND se.expires_at > ?) AS last_seen,
       (SELECT action || ' · ' || at FROM staff_activity a WHERE a.staff_id = s.id ORDER BY a.id DESC LIMIT 1) AS last_action
     FROM staff s ORDER BY s.id`).bind(nowIso()).all()).results;
@@ -600,7 +649,9 @@ on('POST', '/admin/staff', async ({ env, request }) => {
 on('PUT', '/admin/staff/:id', async ({ env, request, params }) => {
   const me = await requireStaff(env, request, 'staff'); const b = await readJson(request); const id = int(params.id, 1);
   if (id === me.id && (b.active === false || b.role === 'employee' || Array.isArray(b.perms))) fail(400, 'You cannot change your own access.');
-  const target = await env.DB.prepare('SELECT role FROM staff WHERE id = ?').bind(id).first(); if (!target) fail(404, 'Staff member not found');
+  const target = await env.DB.prepare('SELECT role, kind FROM staff WHERE id = ?').bind(id).first(); if (!target) fail(404, 'Staff member not found');
+  if (target.kind === 'main' && me.kind !== 'developer') fail(403, "Natan's account can't be changed here.");
+  if (target.kind === 'main' && b.password) fail(400, "Natan sets his own password from his setup link. Use \"Natan's setup link\" on the Staff page.");
   if (me.role !== 'owner' && (target.role === 'owner' || b.role || (Array.isArray(b.perms) && b.perms.some((p) => OWNER_ONLY_PERMS.includes(p))))) fail(403, 'Only an owner can change owners, roles, staff permission or AI assistant access.');
   const sets = [], vals = [];
   if (b.role) { sets.push('role = ?'); vals.push(b.role === 'owner' ? 'owner' : 'employee'); }

@@ -153,9 +153,10 @@
     var h = location.hash.replace(/^#/, '') || '/';
     var parts = h.split('?')[0].split('/').filter(Boolean);
     if (parts[0] === 'join') { shell(false); return viewJoin(); }
+    if (parts[0] === 'welcome') { shell(false); return viewWelcome(); }
     if (!me) {
-      return api('/admin/me').then(function (r) { me = r.staff; PL = r.permLabels || {}; $('#whoName').textContent = me.name + ' · ' + (me.role === 'owner' ? 'owner' : 'employee'); route(); })
-        .catch(function () { shell(false); api('/admin/bootstrap').then(function (b) { b.needsSetup ? viewSetup(b) : viewLogin(); }); });
+      return api('/admin/me').then(function (r) { me = r.staff; PL = r.permLabels || {}; $('#whoName').textContent = me.name + ' · ' + (me.kind === 'developer' ? 'developer' : me.role === 'owner' ? 'owner' : 'employee'); route(); })
+        .catch(function () { shell(false); api('/admin/bootstrap').then(function (b) { b.needsSetup ? viewSetup(b) : viewLogin(b); }); });
     }
     shell(true);
     var v = parts[0] || 'home';
@@ -171,24 +172,64 @@
   aiInit();
   // language switch (English / Hebrew) — anywhere a [data-lang-toggle] button appears
   function langLabels() { $$('[data-lang-toggle]').forEach(function (b) { var t = ADMIN_I18N.lang === 'he' ? 'English' : 'עברית'; if (b.textContent !== t) b.textContent = t; }); }
-  document.addEventListener('click', function (e) { if (!e.target.closest('[data-lang-toggle]')) return; ADMIN_I18N.set(ADMIN_I18N.lang === 'he' ? 'en' : 'he'); langLabels(); });
+  document.addEventListener('click', function (e) { if (!e.target.closest('[data-lang-toggle]')) return; ADMIN_I18N.set(ADMIN_I18N.lang === 'he' ? 'en' : 'he'); langLabels(); if ($('#guide') || $('.login.card .notr-page')) route(); });
   new MutationObserver(langLabels).observe(document.body, { childList: true, subtree: true });
   langLabels();
   window.addEventListener('hashchange', route);
   $('#logoutBtn').addEventListener('click', function () { api('/admin/logout', { method: 'POST' }).finally(function () { me = null; go('#/login'); }); });
 
   // ---------------- login / setup ----------------
-  function viewLogin() {
-    app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Admin login</h1>' +
+  // Natan's login: his name is fixed (no email to type), he only enters his password.
+  // Everyone else uses "Staff login" (email + password).
+  function viewLogin(b) {
+    var m = b && b.main, staffMode = !m || /staff=1/.test(location.hash);
+    var head = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless">';
+    if (!staffMode) {
+      app.innerHTML = head + '<h1 class="center">Hello ' + esc(m.first) + '</h1>' +
+        (m.ready ? '<p class="muted center">Type your password to open the store admin.</p>' +
+          '<form class="form" id="f"><label>Name<input name="username" class="notr" value="' + esc(m.name) + '" readonly autocomplete="username" tabindex="-1"></label>' +
+          '<label>Password<input name="password" type="password" autocomplete="current-password" required autofocus></label>' +
+          '<button class="btn primary big">Log in</button></form>' +
+          '<p class="muted small center">You stay logged in on this device until you tap Log out.</p>'
+          : '<p class="alert">Your account is ready, but you haven\'t made your password yet. Open the special link Israel sent you to make it.</p>') +
+        '<p class="center"><a href="#/login?staff=1" class="small">Staff login (employees)</a></p></div>';
+      if (m.ready) $('#f').addEventListener('submit', function (e) {
+        e.preventDefault(); var f = e.target;
+        act(f.querySelector('button'), api('/admin/login', { method: 'POST', body: { main: true, password: f.password.value } })).then(function () { me = null; go('#/'); });
+      });
+      return;
+    }
+    app.innerHTML = head + '<h1 class="center">Staff login</h1>' +
       '<form class="form" id="f"><label>Email<input name="email" type="email" autocomplete="username" required></label>' +
       '<label>Password<input name="password" type="password" autocomplete="current-password" required></label>' +
-      '<button class="btn primary big">Log in</button></form></div>';
+      '<button class="btn primary big">Log in</button></form>' +
+      (m ? '<p class="center"><a href="#/login" class="small">← Back to ' + esc(m.first) + '\'s login</a></p>' : '') + '</div>';
     $('#f').addEventListener('submit', function (e) {
       e.preventDefault(); var f = e.target;
-      act(f.querySelector('button'), api('/admin/login', { method: 'POST', body: { email: f.email.value, password: f.password.value } })).then(function (r) {
-        me = null; go('#/');
-      });
+      act(f.querySelector('button'), api('/admin/login', { method: 'POST', body: { email: f.email.value, password: f.password.value } })).then(function () { me = null; go('#/'); });
     });
+  }
+  // The private link Israel sends Natan: he makes his password once, then he's in.
+  function viewWelcome() {
+    var t = (location.hash.match(/[?&]t=([^&]+)/) || [])[1] || '';
+    var head = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless">';
+    app.innerHTML = head + '<p class="muted center">Checking your link…</p></div>';
+    api('/admin/main-setup?t=' + encodeURIComponent(t)).then(function (r) {
+      if (!r.ok) { app.innerHTML = head + '<h1 class="center">This link doesn\'t work anymore</h1><p class="alert">It was already used, or it is more than 7 days old. Ask Israel to send you a new one.</p><p class="center"><a href="#/login">Go to login</a></p></div>'; return; }
+      app.innerHTML = head + '<h1 class="center">Hello ' + esc(r.first) + '</h1>' +
+        '<p class="center">' + (r.reset ? 'Make a new password for your store admin.' : 'Welcome to your store admin! Make a password now. You only do this once.') + '</p>' +
+        '<ol class="small guide-steps notr">' + L('<li>Think of a password you will remember. It needs <b>at least 10 letters or numbers</b>.</li><li>Type it in both boxes below.</li><li>Tap <b>Save my password</b>. If your phone or computer asks "Save password?", tap <b>Save</b>, so you never have to type it again.</li>',
+          '<li>תחשוב על סיסמה שתזכור. היא צריכה <b>לפחות 10 אותיות או מספרים</b>.</li><li>כותבים אותה בשתי התיבות למטה.</li><li>לוחצים <b>שמירת הסיסמה שלי</b>. אם הטלפון או המחשב שואלים "לשמור סיסמה?", לוחצים <b>שמירה</b>, וכך לא צריך להקליד אותה שוב אף פעם.</li>') + '</ol>' +
+        '<form class="form" id="f"><label>Name<input name="username" class="notr" value="' + esc(r.name) + '" readonly autocomplete="username" tabindex="-1"></label>' +
+        '<label>New password<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>' +
+        '<label>Type it again<input name="password2" type="password" minlength="10" required autocomplete="new-password"></label>' +
+        '<button class="btn primary big">Save my password</button></form></div>';
+      $('#f').addEventListener('submit', function (e) {
+        e.preventDefault(); var f = e.target;
+        if (f.password.value !== f.password2.value) { toast('The two passwords are not the same. Type them again.', true); return; }
+        act(f.querySelector('button'), api('/admin/main-setup', { method: 'POST', body: { token: t, password: f.password.value } }), 'Password saved. Welcome!').then(function () { me = null; history.replaceState(null, '', '/admin/#/'); route(); });
+      });
+    }).catch(function () { app.innerHTML = head + '<p class="alert">Something went wrong. Check your internet and open the link again.</p></div>'; });
   }
   function viewSetup(b) {
     app.innerHTML = '<div class="login card"><button class="link lang-toggle notr" data-lang-toggle type="button"></button><img class="logo" src="/assets/img/logo-sm.png" alt="Ageless"><h1 class="center">Create the owner account</h1>' +
@@ -204,6 +245,73 @@
     });
   }
 
+
+  // ---------------- first-login guide (Natan) ----------------
+  // Written so anyone can follow it: one small action per step. English and Hebrew are full
+  // hand-written sentences (class "notr" keeps the word-by-word translator off them).
+  function L(en, he) { return window.ADMIN_I18N && ADMIN_I18N.lang === 'he' ? he : en; }
+  function guideOn() { return (me.kind === 'main' && !me.guide_done) || /guide=1/.test(location.hash); }
+  function guideCard(d) {
+    if (!guideOn()) return '';
+    var sq = d && d.square && d.square.connected;
+    var steps1 = L([
+      'Tap the button <b>Open Settings</b> below.',
+      'Find the box called <b>Square payments</b>.',
+      'Tap <b>Connect Square</b>.',
+      'Square\'s own page opens. Log in with the <b>same email and password you use for your Square app</b>.',
+      'Square asks if the Ageless website may use your account. Tap <b>Allow</b>.',
+      'You come back here and it says <b>Connected</b>. That\'s it!'
+    ], [
+      'לוחצים על הכפתור <b>פתח הגדרות</b> למטה.',
+      'מוצאים את המלבן שכתוב עליו <b>תשלומי Square</b>.',
+      'לוחצים על <b>חיבור Square</b>.',
+      'נפתח הדף של Square. נכנסים עם <b>אותו אימייל ואותה סיסמה שבהם אתה נכנס לאפליקציית Square</b>.',
+      'Square שואל אם מותר לאתר של Ageless להשתמש בחשבון שלך. לוחצים <b>אישור</b> (Allow).',
+      'חוזרים לכאן, ורואים שכתוב <b>מחובר</b>. זהו, סיימת!'
+    ]);
+    var steps2 = L([
+      'Tap the button <b>Open Staff</b> below.',
+      'Tap <b>+ Employee access</b>.',
+      'Type the worker\'s name, for example <b>Kirill</b>.',
+      'Choose what they may do: tap <b>Choose what they can do</b> and put a check in the boxes. A good start is <b>See and update orders…</b> and <b>Change quantities</b>. Leave <b>Refund and cancel orders</b> empty if you don\'t want them giving money back.',
+      'Tap <b>Create invite link</b>.',
+      'Tap <b>Copy link</b> (on a phone you can tap <b>Share…</b>).',
+      'Send the link to Kirill in a text message or on WhatsApp.',
+      'Kirill opens the link, types his name, makes his own password and taps <b>Create my login</b>. Next time, he opens the admin and taps <b>Staff login</b>.'
+    ], [
+      'לוחצים על הכפתור <b>פתח צוות</b> למטה.',
+      'לוחצים על <b>+ גישת עובדים</b>.',
+      'כותבים את השם של העובד, למשל <b>קיריל</b>.',
+      'בוחרים מה מותר לו לעשות: לוחצים על <b>בחרו מה הם יכולים לעשות</b> ומסמנים וי בתיבות. התחלה טובה: <b>צפייה ועדכון של הזמנות…</b> ו<b>שינוי כמויות</b>. אם אתה לא רוצה שהעובד יחזיר כסף ללקוחות, אל תסמן את <b>החזרים וביטול הזמנות</b>.',
+      'לוחצים על <b>יצירת קישור הזמנה</b>.',
+      'לוחצים על <b>העתקת הקישור</b> (בטלפון אפשר ללחוץ <b>שיתוף…</b>).',
+      'שולחים את הקישור לקיריל בהודעת SMS או בוואטסאפ.',
+      'קיריל פותח את הקישור, כותב את השם שלו, בוחר סיסמה משלו ולוחץ <b>יצירת הכניסה שלי</b>. בפעם הבאה הוא נכנס לניהול ולוחץ על <b>כניסת צוות</b>.'
+    ]);
+    var li = function (a) { return '<ol class="guide-steps">' + a.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ol>'; };
+    return '<div class="card guide notr" id="guide"><h2>' + L('Start here: 2 things to do first', 'מתחילים כאן: 2 דברים לעשות קודם') + '</h2>' +
+      '<p>' + L('Do these once. After that the website runs by itself.', 'עושים את זה פעם אחת בלבד. אחרי זה האתר עובד לבד.') + '</p>' +
+      '<div class="guide-step"><h3>' + L('Step 1: Connect your Square', 'שלב 1: לחבר את ה-Square שלך') + ' ' + (sq ? '<span class="badge b-ok">' + L('✓ Done', '✓ בוצע') + '</span>' : '') + '</h3>' +
+      '<p>' + L('Square is the app you already use to take money at the register. When you connect it, money from website orders goes <b>straight into your Square account</b>, the same way it does at the register.',
+        'Square היא האפליקציה שאתה כבר משתמש בה כדי לקבל כסף בקופה. כשמחברים אותה, הכסף מהזמנות באתר נכנס <b>ישר לחשבון ה-Square שלך</b>, בדיוק כמו בקופה.') + '</p>' +
+      li(steps1) + '<p><a class="btn primary" href="#/settings">' + L('Open Settings', 'פתח הגדרות') + '</a></p></div>' +
+      '<div class="guide-step"><h3>' + L('Step 2: Let your workers in (like Kirill)', 'שלב 2: לתת לעובדים להיכנס (למשל קיריל)') + '</h3>' +
+      '<p>' + L('Each worker gets <b>their own login</b>. You choose what they are allowed to do, and you can see everything they do. Nobody can get in unless you send them a link.',
+        'כל עובד מקבל <b>כניסה משלו</b>. אתה בוחר מה מותר לו לעשות, ואתה יכול לראות כל מה שהוא עושה. אף אחד לא יכול להיכנס אם לא שלחת לו קישור.') + '</p>' +
+      li(steps2) +
+      '<p class="small muted">' + L('To stop someone later: open <b>Staff</b> and tap <b>Disable</b> next to their name. To see what they did: tap <b>Activity</b>.',
+        'כדי לחסום מישהו בהמשך: פותחים <b>צוות</b> ולוחצים <b>השבתה</b> ליד השם שלו. כדי לראות מה הוא עשה: לוחצים <b>פעילות</b>.') + '</p>' +
+      '<p><a class="btn primary" href="#/staff">' + L('Open Staff', 'פתח צוות') + '</a></p></div>' +
+      '<p class="small">' + L('One more thing: the website only sells items that have a number in <a href="#/stock">Quantities</a>. Type how many of each item you have.',
+        'עוד דבר אחד: האתר מוכר רק מוצרים שיש להם מספר ב<a href="#/stock">כמויות</a>. כותבים כמה יש מכל מוצר.') + '</p>' +
+      '<div class="row"><button class="btn" id="guideDone">' + L('I did these. Hide this guide', 'עשיתי את זה. להסתיר את המדריך') + '</button></div></div>';
+  }
+  function guideHooks() {
+    if ($('#guideDone')) $('#guideDone').onclick = function () {
+      act(this, api('/admin/guide-done', { method: 'POST' }), L('Guide hidden. You can open it again from More.', 'המדריך הוסתר. אפשר לפתוח אותו שוב מתוך עוד.')).then(function () { me.guide_done = 1; if (/guide=1/.test(location.hash)) go('#/'); else viewHome(); });
+    };
+  }
+
   // ---------------- dashboard ----------------
   function viewHome() {
     api('/admin/dashboard').then(function (d) {
@@ -215,7 +323,7 @@
         [d.noQuantity === 0, d.noQuantity ? d.noQuantity + ' product(s) have no quantity yet — <a href="#/stock">set quantities</a> (they cannot be bought until you do)' : 'Every product has a quantity'],
         [d.email.configured, d.email.configured ? 'Email sending is on' : 'Email sending is not set up yet — customer emails wait in <a href="#/outbox">Emails</a> (' + d.email.unsent + ' not sent)'],
       ];
-      app.innerHTML = '<h1>Welcome, ' + esc(me.name.split(' ')[0]) + '</h1>' +
+      app.innerHTML = '<h1>Welcome, ' + esc(me.name.split(' ')[0]) + '</h1>' + guideCard(d) +
         (d.alerts.length ? '<div class="card"><h2>Needs attention</h2>' + d.alerts.map(function (a) { return '<div class="alert bad row between"><span>' + esc(a.message) + (a.order_id ? ' <a href="#/orders/' + a.order_id + '">Open order</a>' : '') + '</span><button class="btn small" data-res="' + a.id + '">Done</button></div>'; }).join('') + '</div>' : '') +
         (R ? '<div class="grid g4">' + stat('Today', R.today) + stat('Last 7 days', R.week) + stat('Last 30 days', R.month) + stat('All time', R.all) + '</div>' +
         '<p class="muted small" style="margin:6px 0 14px">Sales after refunds, from paid website orders.</p>' : '') +
@@ -224,6 +332,7 @@
         '<div><div class="card"><h2>Setup checklist</h2><ul class="checklist">' + check.map(function (c) { return '<li class="' + (c[0] ? 'done' : '') + '">' + c[1] + '</li>'; }).join('') + '</ul></div>' +
         '<div class="card"><h2>Low stock</h2>' + (d.lowStock.length ? '<table class="simple">' + d.lowStock.map(function (l) { return '<tr><td>' + esc(l.name) + (l.vname !== 'Regular' ? ' — ' + esc(l.vname) : '') + '</td><td class="right">' + (l.stock <= 0 ? '<span class="badge b-bad">Out</span>' : l.stock + ' left') + '</td></tr>'; }).join('') + '</table>' : '<p class="muted">Nothing low.</p>') + '</div></div></div>';
       $$('[data-res]').forEach(function (b) { b.onclick = function () { act(b, api('/admin/alerts/' + b.dataset.res + '/resolve', { method: 'POST' })).then(viewHome); }; });
+      guideHooks();
     }).catch(function (e) { app.innerHTML = '<p class="alert bad">' + esc(e.message) + '</p>'; });
   }
   function orderRow(o) {
@@ -626,16 +735,28 @@
       app.innerHTML = '<div class="row between"><h1>Staff</h1><button class="btn primary" id="invBtn">+ Employee access</button></div>' +
         '<p class="muted small">Create an invite link, choose what the person can do, and send it to them. They open it, type their name and a password, and they\'re in. You can see everything they do under Activity.</p>' +
         '<div class="list">' + r.staff.map(function (s) {
-          var full = s.role === 'owner';
-          return '<div class="item" style="grid-template-columns:1fr"><div class="row between"><span><span class="t">' + esc(s.name) + '</span> ' + (full ? '<span class="badge b-ok">Full access</span>' : '<span class="badge">Employee</span>') +
-            (s.online ? ' <span class="badge b-ok">● Online now</span>' : '') + (s.active ? '' : ' <span class="badge b-bad">Disabled</span>') + '<br><span class="muted small">' + esc(s.email) + ' · last login ' + (s.last_login ? when(s.last_login) : 'never') + '</span>' +
+          var full = s.role === 'owner', isMain = s.kind === 'main', isDev = s.kind === 'developer';
+          var label = isMain ? '<span class="badge b-ok">Store owner</span>' : isDev ? '<span class="badge">Developer (Israel)</span>' : full ? '<span class="badge b-ok">Full access</span>' : '<span class="badge">Employee</span>';
+          if (isMain && !s.has_password) label += ' <span class="badge b-warn">Password not made yet</span>';
+          var locked = isMain && me.kind !== 'developer';
+          return '<div class="item" style="grid-template-columns:1fr"><div class="row between"><span><span class="t">' + esc(s.name) + '</span> ' + label +
+            (s.online ? ' <span class="badge b-ok">● Online now</span>' : '') + (s.active ? '' : ' <span class="badge b-bad">Disabled</span>') + '<br><span class="muted small">' + (isMain ? '' : esc(s.email) + ' · ') + 'last login ' + (s.last_login ? when(s.last_login) : 'never') + '</span>' +
             (s.last_action ? '<br><span class="muted small">Last action: ' + esc(s.last_action.split(' · ')[0]) + ' · ' + when(s.last_action.split(' · ')[1]) + '</span>' : '') + '</span></div>' +
             (full ? '' : '<div class="small muted" style="margin:6px 0">Can: ' + (s.perms.map(function (p) { return esc((PL[p] || p).split(',')[0]); }).join(' · ') || 'nothing yet') + '</div>') +
-            '<div class="row" style="margin-top:6px"><a class="btn small primary" href="#/staff/' + s.id + '">Activity</a>' + (s.id === me.id ? '<span class="muted small">(you)</span>' :
+            '<div class="row" style="margin-top:6px"><a class="btn small primary" href="#/staff/' + s.id + '">Activity</a>' + (s.id === me.id ? '<span class="muted small">(you)</span>' : isMain ? (me.kind === 'developer' ? '<button class="btn small primary" data-mainlink>Natan\'s setup link</button>' : '') :
               '<button class="btn small" data-perm-edit="' + s.id + '">Permissions</button><button class="btn small" data-act="' + s.id + '" data-to="' + (s.active ? 0 : 1) + '">' + (s.active ? 'Disable' : 'Enable') + '</button><button class="btn small" data-pw="' + s.id + '">Reset password</button>') + '</div></div>';
         }).join('') + '</div>' +
         '<div class="card" style="margin-top:14px"><h2>Open invite links</h2>' + (inv.length ? '<table class="simple">' + inv.map(function (i) { return '<tr><td>' + esc(i.name || i.email || 'Anyone with the link') + '<br><span class="muted small">' + (i.role === 'owner' ? 'Full access' : i.perms.length + ' permission(s)') + ' · expires ' + when(i.expires_at) + '</span></td><td class="right"><button class="btn small danger" data-cancel="' + i.id + '">Cancel</button></td></tr>'; }).join('') + '</table>' : '<p class="muted">None.</p>') + '</div>' +
         '<p><a href="#/activity" class="btn">See everyone\'s activity</a></p>';
+      $$('[data-mainlink]').forEach(function (b) { b.onclick = function () {
+        act(b, api('/admin/main-setup-link', { method: 'POST' })).then(function (r) {
+          var m = modal('<h2>Natan\'s setup link</h2><p class="notr">' + L('Send this link to Natan (text or WhatsApp). He opens it, makes his password once, and he\'s in. It works <b>one time</b> and stops working after <b>' + r.expires_days + ' days</b>. Making a new link cancels the old one. If he ever forgets his password, make a new link here.',
+            'שולחים את הקישור הזה לנתן (SMS או וואטסאפ). הוא פותח אותו, בוחר סיסמה פעם אחת, ונכנס. הקישור עובד <b>פעם אחת בלבד</b> ומפסיק לעבוד אחרי <b>' + r.expires_days + ' ימים</b>. יצירת קישור חדש מבטלת את הקודם. אם הוא שוכח את הסיסמה, יוצרים כאן קישור חדש.') + '</p>' +
+            '<input class="notr" readonly value="' + esc(r.link) + '" style="width:100%" onclick="this.select()"><div class="row" style="margin-top:10px"><button class="btn primary" id="mlCopy">Copy link</button>' + (navigator.share ? '<button class="btn" id="mlShare">Share…</button>' : '') + '<button class="btn" data-close>Close</button></div>');
+          $('#mlCopy', m).onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(r.link) : Promise.reject()).then(function () { toast('Link copied'); }, function () { toast('Select the link and copy it', true); }); };
+          if ($('#mlShare', m)) $('#mlShare', m).onclick = function () { navigator.share({ title: 'Ageless admin', text: 'Natan, open this to make your Ageless admin password:', url: r.link }).catch(function () {}); };
+        });
+      }; });
       $('#invBtn').onclick = function () {
         var m = modal('<h2>Employee access</h2><form class="form" id="invf"><label>Their name (optional)<input name="name" maxlength="60"></label><label>Their email (optional — locks the link to this email)<input name="email" type="email"></label>' +
           permBoxes(['orders', 'products', 'stock'], false) + '<label>Link works for<select name="days"><option value="1">1 day</option><option value="7" selected>7 days</option><option value="30">30 days</option></select></label>' +
@@ -709,6 +830,7 @@
     if (can('orders')) links.push(['#/outbox', 'Emails']);
     if (can('settings')) links.push(['#/settings', 'Settings & Square']);
     if (can('staff')) links.push(['#/staff', 'Staff & employee access'], ['#/activity', 'Staff activity'], ['#/log', 'System log']);
+    if (me.role === 'owner') links.push(['#/home?guide=1', 'Welcome guide (Square + workers)']);
     app.innerHTML = '<h1>More</h1><div class="list">' + links.map(function (l) { return '<a class="item" style="grid-template-columns:1fr" href="' + l[0] + '"><span class="t">' + l[1] + '</span></a>'; }).join('') +
       '<button class="item btn" style="grid-template-columns:1fr" id="lo2">Log out (' + esc(me.name) + ')</button></div>';
     $('#lo2').onclick = function () { $('#logoutBtn').click(); };

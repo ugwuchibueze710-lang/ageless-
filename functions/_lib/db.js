@@ -56,6 +56,15 @@ const MIGRATIONS = [
    ALTER TABLE orders ADD COLUMN eta_note TEXT;
    UPDATE settings SET v = 'Usually arrives in 3–5 business days.' WHERE k = 'shipping_time_text' AND v = 'Ships in 1–2 business days.';
    UPDATE settings SET v = 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715.' WHERE k = 'pickup_instructions' AND v = 'Pick up at Ageless inside Eastland Mall, 800 N Green River Rd, Evansville, IN 47715. We will email you when your order is ready.'`,
+  // v5 — Natan's own login (name only, set once from a private link), developer account, first-login guide
+  `ALTER TABLE staff ADD COLUMN kind TEXT NOT NULL DEFAULT 'staff';
+   ALTER TABLE staff ADD COLUMN guide_done INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE IF NOT EXISTS main_setup (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, created_by INTEGER, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
+   INSERT OR IGNORE INTO staff (email, name, role, pass_hash, kind, created_at) VALUES ('admin@agelessevv.com', 'Natan Yona', 'owner', '!', 'main', '2026-11-16T00:00:00.000Z');
+   UPDATE staff SET kind = 'main', name = 'Natan Yona', role = 'owner', active = 1 WHERE email = 'admin@agelessevv.com';
+   UPDATE staff SET kind = 'developer' WHERE email = 'israelhugo636@gmail.com';
+   UPDATE staff SET active = 0 WHERE email = 'ugwuchibueze710@gmail.com';
+   DELETE FROM sessions WHERE staff_id IN (SELECT id FROM staff WHERE active = 0)`,
 ];
 
 // The 11 items already on the site: photos cut from the store's own Google photos.

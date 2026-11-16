@@ -132,3 +132,12 @@ html[dir="rtl"] .ai-msg.u{border-bottom-right-radius:14px;border-bottom-left-rad
 html[dir="rtl"] .ai-msg.a{border-bottom-left-radius:14px;border-bottom-right-radius:4px}
 html[dir="rtl"] .right{text-align:left}
 html[dir="rtl"] input[type=email],html[dir="rtl"] input[type=tel],html[dir="rtl"] input[inputmode]{direction:ltr;text-align:right}
+
+/* first-login guide */
+.guide { border: 1px solid var(--lav); }
+.guide h2 { margin-top: 0; }
+.guide-step { padding: 10px 0; border-top: 1px solid var(--line); }
+.guide-step h3 { margin: 4px 0 6px; font-size: 1.05rem; }
+.guide-steps { margin: 6px 0 10px; padding-inline-start: 1.4em; line-height: 1.55; }
+.guide-steps li { margin: 4px 0; }
+.login .guide-steps { text-align: start; }

@@ -21,6 +21,9 @@ export function cleanPerms(list) { return [...new Set((Array.isArray(list) ? lis
 const ITER = 100000;
 const COOKIE = 'ag_admin';
 const SESSION_HOURS = 12;
+// Natan and the developer stay logged in until they tap Log out (browsers cap cookies at ~400 days; it renews on use).
+export const LONG_HOURS = 24 * 395;
+export const longSession = (kind) => kind === 'main' || kind === 'developer';
 
 const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -47,13 +50,22 @@ export function passwordProblem(p) {
 
 export async function createSession(env, staffId, request) {
   const t = token(32), h = await sha256Hex(t);
-  const exp = new Date(Date.now() + SESSION_HOURS * 3600e3).toISOString();
+  const k = await env.DB.prepare('SELECT kind FROM staff WHERE id = ?').bind(staffId).first();
+  const hours = longSession(k?.kind) ? LONG_HOURS : SESSION_HOURS;
+  const exp = new Date(Date.now() + hours * 3600e3).toISOString();
   await env.DB.batch([
     env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(nowIso()),
     env.DB.prepare('INSERT INTO sessions (token_hash, staff_id, expires_at, created_at, last_seen, ip) VALUES (?, ?, ?, ?, ?, ?)').bind(h, staffId, exp, nowIso(), nowIso(), request ? clientIp(request) : null),
     env.DB.prepare('UPDATE staff SET last_login = ? WHERE id = ?').bind(nowIso(), staffId),
   ]);
-  return `${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_HOURS * 3600}`;
+  return `${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${hours * 3600}`;
+}
+// Re-send the same session cookie with a fresh expiry (used for long sessions so they never run out while in use).
+export async function renewLongSession(env, request) {
+  const t = readCookie(request); if (!t) return null;
+  const h = await sha256Hex(t);
+  await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(new Date(Date.now() + LONG_HOURS * 3600e3).toISOString(), h).run();
+  return `${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${LONG_HOURS * 3600}`;
 }
 export function clearCookie() { return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`; }
 
@@ -76,7 +88,7 @@ export async function requireStaff(env, request, perm) {
   const t = readCookie(request);
   if (!t) fail(401, 'Please log in.');
   const h = await sha256Hex(t), now = nowIso();
-  const s = await env.DB.prepare(`SELECT st.id, st.email, st.name, st.role, st.perms, se.last_seen FROM sessions se JOIN staff st ON st.id = se.staff_id
+  const s = await env.DB.prepare(`SELECT st.id, st.email, st.name, st.role, st.perms, st.kind, st.guide_done, se.last_seen FROM sessions se JOIN staff st ON st.id = se.staff_id
      WHERE se.token_hash = ? AND se.expires_at > ? AND st.active = 1`).bind(h, now).first();
   if (!s) fail(401, 'Your session ended. Please log in again.');
   if (request.method !== 'GET' && request.headers.get('x-ageless-admin') !== '1') fail(403, 'Blocked request.');
@@ -85,6 +97,7 @@ export async function requireStaff(env, request, perm) {
   if (!s.last_seen || Date.parse(s.last_seen) < Date.now() - 60e3) await env.DB.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?').bind(now, h).run();
   delete s.last_seen;
   if (perm === 'owner' && s.role !== 'owner') fail(403, 'Only an owner can do this.');
-  if (perm && perm !== 'owner' && !s.perms.includes(perm)) fail(403, `You don't have permission for this (${PERMS[perm] ? PERMS[perm].toLowerCase() : perm}). Ask the owner.`);
+  if (perm === 'developer' && s.kind !== 'developer') fail(403, 'Only the developer can do this.');
+  if (perm && perm !== 'owner' && perm !== 'developer' && !s.perms.includes(perm)) fail(403, `You don't have permission for this (${PERMS[perm] ? PERMS[perm].toLowerCase() : perm}). Ask the owner.`);
   return s;
 }

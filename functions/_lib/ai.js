@@ -13,7 +13,7 @@ export const aiConfigured = (env) => !!env.GROQ_API_KEY;
 const MODEL = (env) => env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 // ---------- what the assistant may touch ----------
-const BLOCKED = [/^\/admin\/(setup|login|logout|password|bootstrap|join\/)/, /^\/admin\/ai\//, /^\/admin\/square\/connect$/];
+const BLOCKED = [/^\/admin\/(setup|login|logout|password|bootstrap|join\/|main-setup|guide-done)/, /^\/admin\/ai\//, /^\/admin\/square\/connect$/];
 export function allowedPath(method, path) {
   if (typeof path !== 'string' || !/^\/admin\/[\w\-\/]*(\?[\w=&%\-.,:]*)?$/.test(path)) return false;
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return false;
