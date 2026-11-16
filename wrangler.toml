@@ -1,0 +1,8 @@
+name = "ageless"
+pages_build_output_dir = "."
+compatibility_date = "2025-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ageless-db"
+database_id = "856fc5b6-0255-4db3-9d56-34d83b97e927"

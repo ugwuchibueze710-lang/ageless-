@@ -82,8 +82,9 @@
     <h2>Shop the Store</h2>
     <p>Real toys from the Ageless shelves. Add to cart, then pick up at the store or get it delivered.</p>
   </div>
+  <div class="shop-tools"><input type="search" id="q" placeholder="Search plush, figures, keychains…" aria-label="Search products" autocomplete="off"></div>
   <div class="chips" id="chips" role="tablist"></div>
-  <div class="grid" id="grid"></div>
+  <div class="grid" id="grid"><p class="shop-msg">Loading the shelves…</p></div>
 </section>
 
 <!-- ============ VISIT ============ -->
@@ -114,6 +115,23 @@
   <p class="credit">Website by <a href="https://blackdaddytech.com" target="_blank" rel="noopener">Black Daddy Tech</a></p>
 </footer>
 
+<!-- ============ PRODUCT DETAIL ============ -->
+<div class="pd-bg" id="pdBg" hidden></div>
+<div class="pd" id="pd" role="dialog" aria-modal="true" aria-labelledby="pdName" hidden>
+  <button class="dr-x pd-x" id="pdX" aria-label="Close">×</button>
+  <div class="pd-gal"><div class="pd-main"><img id="pdImg" alt=""></div><div class="pd-thumbs" id="pdThumbs"></div></div>
+  <div class="pd-info">
+    <p class="kicker" id="pdCat"></p>
+    <h3 id="pdName"></h3>
+    <div class="c-price" id="pdPrice"></div>
+    <p class="pd-stock" id="pdStock"></p>
+    <p class="pd-desc" id="pdDesc"></p>
+    <label class="pd-var" id="pdVarWrap">Option<select id="pdVar"></select></label>
+    <div class="pd-buy"><div class="qty"><button type="button" id="pdMinus" aria-label="Less">−</button><span id="pdQty">1</span><button type="button" id="pdPlus" aria-label="More">+</button></div>
+      <button class="btn btn-neon" id="pdAdd">Add to Cart</button></div>
+  </div>
+</div>
+
 <!-- ============ CART DRAWER ============ -->
 <div class="drawer-bg" id="drawerBg"></div>
 <aside class="drawer" id="drawer" aria-label="Shopping cart" aria-hidden="true">
@@ -128,29 +146,46 @@
       <p>To get these toys now, visit Ageless inside Eastland Mall or call <a href="tel:+13175992537">(317) 599-2537</a>.</p>
     </div>
   </div>
-  <form class="checkout" id="checkout" hidden>
+  <form class="checkout" id="checkout" hidden novalidate>
     <button type="button" class="back" id="backToCart">← Back to cart</button>
-    <h4>Your details</h4>
-    <label>Full name<input name="name" required autocomplete="name"></label>
-    <label>Phone<input name="phone" type="tel" required autocomplete="tel"></label>
-    <label>Email<input name="email" type="email" autocomplete="email"></label>
-    <fieldset class="seg"><legend>How do you want it?</legend>
-      <label><input type="radio" name="method" value="pickup" checked> Pick up in store</label>
-      <label><input type="radio" name="method" value="delivery"> Delivery</label>
-    </fieldset>
-    <div class="addr" id="addrFields" hidden>
-      <label>Street address<input name="street" autocomplete="street-address"></label>
-      <div class="row"><label>City<input name="city" autocomplete="address-level2"></label><label>ZIP<input name="zip" inputmode="numeric" autocomplete="postal-code"></label></div>
+    <div id="coStep1">
+      <h4>Your details</h4>
+      <label>Full name<input name="name" required autocomplete="name" maxlength="80"></label>
+      <label>Email<input name="email" type="email" required autocomplete="email" maxlength="120"></label>
+      <label>Phone<input name="phone" type="tel" required autocomplete="tel" maxlength="30"></label>
+      <fieldset class="seg" id="fulfil"><legend>How do you want it?</legend>
+        <label id="optPickup"><input type="radio" name="method" value="pickup" checked> Pick up at the store <small>(free)</small></label>
+        <label id="optShip"><input type="radio" name="method" value="shipping"> Ship to me <small>(US only)</small></label>
+      </fieldset>
+      <p class="fine" id="pickupNote"></p>
+      <div class="addr" id="addrFields" hidden>
+        <label>Street address<input name="street" autocomplete="address-line1" maxlength="120"></label>
+        <label>Apt / suite (optional)<input name="street2" autocomplete="address-line2" maxlength="120"></label>
+        <label>City<input name="city" autocomplete="address-level2" maxlength="60"></label>
+        <div class="row"><label>State<select name="state" autocomplete="address-level1"><option value="">Choose…</option></select></label>
+          <label>ZIP<input name="zip" inputmode="numeric" autocomplete="postal-code" maxlength="10"></label></div>
+        <p class="fine" id="shipNote"></p>
+      </div>
+      <label>Notes (optional)<textarea name="notes" rows="2" maxlength="500" placeholder="Anything the store should know"></textarea></label>
     </div>
-    <label>Notes (optional)<textarea name="notes" rows="2" placeholder="Character, color, size…"></textarea></label>
-    <div class="dr-total"><span>Total</span><b id="coTotal">$0.00</b></div>
-    <button class="btn btn-neon wide" type="submit" id="placeOrder">Place Order</button>
-    <p class="fine">The store will contact you to confirm your order.</p>
-    <p class="co-msg" id="coMsg" role="status"></p>
+    <div class="sum" id="coSum">
+      <div class="dr-total sm"><span>Subtotal</span><b id="coSub">$0.00</b></div>
+      <div class="dr-total sm"><span>Shipping</span><b id="coShip">Free</b></div>
+      <div class="dr-total sm" id="coTaxRow" hidden><span>Sales tax</span><b id="coTax">$0.00</b></div>
+      <div class="dr-total"><span>Total</span><b id="coTotal">$0.00</b></div>
+      <p class="fine" id="coTaxNote">Sales tax, if any, is added at payment.</p>
+    </div>
+    <div id="coStep2" hidden>
+      <h4>Payment</h4>
+      <p class="fine" id="holdNote"></p>
+      <div id="card-container"></div>
+    </div>
+    <button class="btn btn-neon wide" type="submit" id="placeOrder">Continue to payment</button>
+    <p class="fine">Payments are processed securely by Square. Your card details never touch this website.</p>
+    <p class="co-msg" id="coMsg" role="status" aria-live="polite"></p>
   </form>
 </aside>
 
-<script src="assets/products.js"></script>
 <script src="assets/hero.js"></script>
 <script src="assets/shop.js"></script>
 <script src="assets/neon-bg.js"></script>

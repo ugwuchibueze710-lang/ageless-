@@ -8,7 +8,7 @@
   document.body.prepend(bg); document.body.appendChild(fg);
   var bctx=bg.getContext('2d'), fctx=fg.getContext('2d');
   var W=0,H=0, parts=[], fparts=[], sprites=null;
-  var COLORS=[['#ff4fd8','#ffd0f6'],['#a45bff','#e6d4ff'],['#5ef2ff','#e0fdff'],['#ffffff','#ffe6fb'],['#ff4fd8','#ffd0f6']];
+  var COLORS=[['#ffffff','#ffffff'],['#ffffff','#ffffff'],['#e9e1ff','#ffffff'],['#c4adff','#ffffff'],['#ffffff','#fbf8ff']];
 
   function mk(w,h){var c=document.createElement('canvas');c.width=w;c.height=h;return c;}
   function build(letters){

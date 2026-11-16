@@ -107,4 +107,53 @@
   layout(); setTimeout(layout,300);
   if(!reduce) requestAnimationFrame(tick);
   setNeon(true,false);
+
+  // ---- LANDING: aggressive flicker + electric buzz, synced ----
+  var SEQ=[0,70,120,210,250,330,360,520,560,600,700,760,820,1000,1040,1080,1180,1260,1300,1500,1540,1580,1700,1900,1950,2000,2250,2320,2380]; // toggle times (ms); starts dark
+  var landed=false, heard=false;
+  function flickerVisual(){
+    sign.classList.remove('ignite');
+    var dark=true; sign.classList.add('flk'); hero.classList.add('flk');
+    SEQ.forEach(function(t,i){ setTimeout(function(){
+      if(!on) return; dark=!dark; sign.classList.toggle('flk',dark); hero.classList.toggle('flk',dark);
+    },t); });
+    setTimeout(function(){ sign.classList.remove('flk'); hero.classList.remove('flk'); },SEQ[SEQ.length-1]+60);
+  }
+  function flickerSound(){
+    var c=audio(); if(!c||c.state!=='running') return false;
+    var t0=c.currentTime+.02, end=t0+SEQ[SEQ.length-1]/1000+1.4;
+    var master=c.createGain(); master.gain.value=.0001; master.connect(c.destination);
+    // 60Hz mains hum + 120Hz transformer buzz + harsh harmonics
+    [[60,'square',.35],[120,'sawtooth',.55],[180,'sawtooth',.22],[240,'square',.12]].forEach(function(o){
+      var osc=c.createOscillator(), g=c.createGain(); osc.type=o[1]; osc.frequency.value=o[0]; g.gain.value=o[2];
+      osc.connect(g).connect(master); osc.start(t0); osc.stop(end);
+    });
+    var bp=c.createBiquadFilter(); bp.type='lowpass'; bp.frequency.value=1800; master.disconnect(); master.connect(bp).connect(c.destination);
+    // gain follows the flicker: loud when lit, near silent when dark
+    var lit=false; master.gain.setValueAtTime(.0001,t0);
+    SEQ.forEach(function(ms){ lit=!lit; var t=t0+ms/1000;
+      master.gain.setValueAtTime(lit?.26:.01,t);
+      // crackle/spark at every switch
+      var n=c.createBuffer(1,c.sampleRate*.05,c.sampleRate), d=n.getChannelData(0);
+      for(var i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);
+      var s=c.createBufferSource(), sg=c.createGain(); s.buffer=n; sg.gain.value=lit?.55:.3; s.connect(sg).connect(c.destination); s.start(t);
+    });
+    var settle=t0+SEQ[SEQ.length-1]/1000+.06;
+    master.gain.setValueAtTime(.2,settle); master.gain.exponentialRampToValueAtTime(.03,settle+.5); master.gain.exponentialRampToValueAtTime(.0001,end);
+    return true;
+  }
+  function land(){ if(!on) return; flickerVisual(); if(flickerSound()) heard=true; }
+  // try right away (works if the browser allows sound)…
+  try{ var c0=audio(); if(c0&&c0.state==='suspended') c0.resume().catch(function(){}); }catch(e){}
+  setTimeout(land,350);
+  // …otherwise replay flicker + buzz on the visitor's first tap/click/key
+  function firstGesture(e){
+    if(heard) return cleanup();
+    if(e&&e.target&&e.target.closest&&e.target.closest('#neonSwitch')) return cleanup();
+    var c=audio(); if(!c) return cleanup();
+    (c.state==='running'?Promise.resolve():c.resume()).then(function(){ if(on){ flickerVisual(); flickerSound(); } heard=true; }).catch(function(){});
+    cleanup();
+  }
+  function cleanup(){ ['pointerdown','keydown','touchstart'].forEach(function(ev){ removeEventListener(ev,firstGesture,true); }); }
+  ['pointerdown','keydown','touchstart'].forEach(function(ev){ addEventListener(ev,firstGesture,true); });
 })();

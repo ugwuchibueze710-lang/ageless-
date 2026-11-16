@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Ageless Admin</title>
+<meta name="theme-color" content="#09080d">
+<link rel="icon" href="/assets/img/logo-sm.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+<header class="top" id="top" hidden>
+  <a href="#/" class="brand"><img src="/assets/img/logo-sm.png" alt="Ageless"><span>Admin</span></a>
+  <nav class="side" id="nav">
+    <a href="#/" data-nav="home">Home</a>
+    <a href="#/orders" data-nav="orders" data-perm="orders">Orders</a>
+    <a href="#/products" data-nav="products" data-perm="products">Products</a>
+    <a href="#/stock" data-nav="stock" data-perm="stock">Quantities</a>
+    <a href="#/categories" data-nav="categories" data-perm="products">Categories</a>
+    <a href="#/settings" data-nav="settings" data-perm="settings">Settings</a>
+    <a href="#/staff" data-nav="staff" data-perm="staff">Staff</a>
+    <a href="#/outbox" data-nav="outbox" data-perm="orders">Emails</a>
+  </nav>
+  <div class="who"><span id="whoName"></span><button class="link" id="logoutBtn">Log out</button></div>
+</header>
+<main id="app" aria-live="polite"><p class="muted center pad">Loading…</p></main>
+<nav class="tabbar" id="tabbar" hidden>
+  <a href="#/" data-nav="home"><b>⌂</b>Home</a>
+  <a href="#/orders" data-nav="orders" data-perm="orders"><b>☰</b>Orders</a>
+  <a href="#/products" data-nav="products" data-perm="products"><b>✦</b>Products</a>
+  <a href="#/stock" data-nav="stock" data-perm="stock"><b>#</b>Qty</a>
+  <a href="#/more" data-nav="more"><b>⋯</b>More</a>
+</nav>
+<div class="toast" id="toast" role="status"></div>
+<script src="/admin/admin.js"></script>
+</body>
+</html>
