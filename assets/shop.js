@@ -99,7 +99,7 @@
     var q=e.target.closest('[data-q]'); if(q){ add(q.dataset.id,+q.dataset.q); return; }
     var rm=e.target.closest('[data-rm]'); if(rm){ delete cart[rm.dataset.rm]; save(); renderCart(); }
   });
-  function open(v){ drawer.classList.toggle('open',v); drawerBg.classList.toggle('open',v); drawer.setAttribute('aria-hidden',!v); if(!v){ showCheckout(false); } }
+  function open(v){ if(!v&&window.__agDemo) window.__agDemo.hidden=true; drawer.classList.toggle('open',v); drawerBg.classList.toggle('open',v); drawer.setAttribute('aria-hidden',!v); if(!v){ showCheckout(false); } }
   cartBtn.addEventListener('click',function(){ open(true); });
   drawerBg.addEventListener('click',function(){ open(false); });
   document.getElementById('drawerX').addEventListener('click',function(){ open(false); });
@@ -107,7 +107,12 @@
 
   // ---------- checkout ----------
   function showCheckout(v){ co.hidden=!v; drBody.style.display=v?'none':''; coMsg.textContent=''; coMsg.className='co-msg'; renderCart(); }
-  document.getElementById('toCheckout').addEventListener('click',function(){ showCheckout(true); });
+  // DEMO MODE: online checkout isn't live yet (admin + payments not connected).
+  var DEMO=true, demoNote=document.getElementById('demoNote'); window.__agDemo=demoNote;
+  document.getElementById('toCheckout').addEventListener('click',function(){
+    if(DEMO){ demoNote.hidden=false; demoNote.classList.remove('shake'); void demoNote.offsetWidth; demoNote.classList.add('shake'); return; }
+    showCheckout(true);
+  });
   document.getElementById('backToCart').addEventListener('click',function(){ showCheckout(false); });
   co.addEventListener('change',function(e){
     if(e.target.name==='method'){ var del=e.target.value==='delivery'; document.getElementById('addrFields').hidden=!del;
@@ -115,6 +120,7 @@
   });
   co.addEventListener('submit',function(e){
     e.preventDefault();
+    if(DEMO){ coMsg.textContent='Online checkout is coming soon — this is a demo.'; coMsg.className='co-msg err'; return; }
     if(!count()){ coMsg.textContent='Your cart is empty.'; coMsg.className='co-msg err'; return; }
     var f=co.elements, btn=document.getElementById('placeOrder');
     var order={

@@ -234,3 +234,10 @@ main,footer,.nav{position:relative;z-index:2}
   .shop{padding:60px 4vw 50px}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+.demo-note{margin-top:14px;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.06);box-shadow:0 0 18px rgba(185,162,255,.25);font-size:14px;line-height:1.5}
+.demo-note[hidden]{display:none}
+.demo-note b{display:block;margin-bottom:6px;font-size:15px;text-shadow:0 0 10px rgba(255,255,255,.6)}
+.demo-note p{color:#ddd8ea;margin-top:4px}.demo-note a{color:#fff;font-weight:700}
+.demo-note.shake{animation:dshake .45s}
+@keyframes dshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
