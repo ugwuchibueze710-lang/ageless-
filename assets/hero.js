@@ -53,7 +53,7 @@
   }
 
   function makeSparkles(){
-    var cols=['#ff4fd8','#a45bff','#5ef2ff','#ffd88a','#ffffff'], n=innerWidth<760?16:34, html='';
+    var cols=['#ffffff','#ffffff','#e6dcff','#c9b6ff','#ffffff'], n=innerWidth<760?16:34, html='';
     for(var i=0;i<n;i++){
       var z=(2+Math.random()*5).toFixed(1), star=Math.random()<.35;
       html+='<i class="'+(star?'star':'')+'" style="left:'+(Math.random()*100).toFixed(1)+'%;top:'+(20+Math.random()*75).toFixed(1)+
