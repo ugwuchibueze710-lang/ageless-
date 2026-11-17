@@ -65,6 +65,13 @@ const MIGRATIONS = [
    UPDATE staff SET kind = 'developer' WHERE email = 'israelhugo636@gmail.com';
    UPDATE staff SET active = 0 WHERE email = 'ugwuchibueze710@gmail.com';
    DELETE FROM sessions WHERE staff_id IN (SELECT id FROM staff WHERE active = 0)`,
+  // v6 — BDT connection (Site Protocol v1): keys, link to BDT, issues for BDT, request stats, messages from BDT
+  `CREATE TABLE IF NOT EXISTS bdt_keys (id INTEGER PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, hint TEXT, created_by INTEGER, created_at TEXT NOT NULL, revoked_at TEXT, last_used_at TEXT);
+   CREATE TABLE IF NOT EXISTS bdt_link (id INTEGER PRIMARY KEY CHECK (id = 1), bdt_url TEXT NOT NULL, site_id TEXT NOT NULL, secret_enc TEXT NOT NULL, connected_at TEXT NOT NULL, last_pull_at TEXT);
+   CREATE TABLE IF NOT EXISTS site_issues (id TEXT PRIMARY KEY, kind TEXT NOT NULL, level TEXT NOT NULL, title TEXT NOT NULL, message TEXT, stack TEXT, path TEXT, route TEXT, element TEXT, source TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 1, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, meta TEXT, cleared_at TEXT);
+   CREATE INDEX IF NOT EXISTS site_issues_last ON site_issues(last_seen);
+   CREATE TABLE IF NOT EXISTS req_stats (minute TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0, total_ms INTEGER NOT NULL DEFAULT 0, pageviews INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE IF NOT EXISTS bdt_messages (id INTEGER PRIMARY KEY, remote_id TEXT UNIQUE, from_name TEXT, body TEXT, sent_at TEXT, received_at TEXT NOT NULL, read_at TEXT)`,
 ];
 
 // The 11 items already on the site: photos cut from the store's own Google photos.
@@ -96,7 +103,7 @@ const DEFAULT_SETTINGS = {
   hold_minutes: '10',
   pay_in_store_enabled: '1',
   pickup_ready_text: 'Usually ready within 2 hours during store hours.',
-  shipping_time_text: 'Usually arrives in 3–5 business days.', delivery_days: '4',
+  shipping_time_text: 'Usually arrives in 3–5 business days.', delivery_days: '4', site_offline: '0', site_offline_message: '', site_offline_since: '', social_facebook: '', social_instagram: '', social_tiktok: '', contact_email: '',
   pickup_hold_days: '3',
   site_announcement: '',
   marquee_items: JSON.stringify(['Plush', 'Light-Up Ear Hats', 'Anime Figures', 'Keychains', 'Shoe Charms', 'Wall Scrolls', 'Squishies']),

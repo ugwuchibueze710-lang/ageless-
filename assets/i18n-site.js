@@ -1,6 +1,8 @@
 // Shop translations: [English, Español, עברית, Français]
 (function () {
   var T = [
+    ["We'll be right back", 'Volvemos enseguida', 'נחזור מיד', 'Nous revenons vite'],
+    ['Our online store is closed for a moment. You can still visit us inside Eastland Mall.', 'Nuestra tienda en línea está cerrada por un momento. Puedes visitarnos dentro de Eastland Mall.', 'החנות המקוונת שלנו סגורה לרגע. אפשר לבקר אותנו בתוך קניון Eastland.', 'Notre boutique en ligne est fermée un instant. Vous pouvez nous rendre visite au centre Eastland Mall.'],
     ['Your order is ready — come pick it up at Ageless.', 'Tu pedido está listo: ven a recogerlo a Ageless.', 'ההזמנה שלך מוכנה — אפשר לבוא לאסוף אותה ב-Ageless.', 'Votre commande est prête — venez la récupérer chez Ageless.'],
     ['Arriving', 'Llega el', 'מגיע ב', 'Arrive le'],
     ['Shipped — on its way', 'Enviado — en camino', 'נשלח — בדרך אליך', 'Expédiée — en route'],
@@ -61,7 +63,7 @@
     ['Directions', 'Cómo llegar', 'הוראות הגעה', 'Itinéraire'],
     ['Map to Ageless at Eastland Mall', 'Mapa de Ageless en Eastland Mall', 'מפה ל-Ageless בקניון איסטלנד', 'Plan pour Ageless à Eastland Mall'],
     ['Anime · Plush · Figures · Collectibles — Eastland Mall, Evansville, IN', 'Anime · Peluches · Figuras · Coleccionables — Eastland Mall, Evansville, IN', 'אנימה · בובות · דמויות · פריטי אספנות — קניון איסטלנד, אוונסוויל', 'Anime · Peluches · Figurines · Collection — Eastland Mall, Evansville, IN'],
-    ['Website by', 'Sitio web por', 'האתר נבנה על ידי', 'Site web par'],
+    ['Powered by', 'Con la tecnología de', 'מופעל על ידי', 'Propulsé par'],
     ['Your Cart', 'Tu carrito', 'העגלה שלך', 'Votre panier'],
     ['Shopping cart', 'Carrito de compras', 'עגלת קניות', 'Panier'],
     ['Close cart', 'Cerrar carrito', 'סגירת העגלה', 'Fermer le panier'],

@@ -299,6 +299,12 @@
     Object.keys(cart).forEach(function(k){ if(!VAR[k]) delete cart[k]; }); save();
   }
   function refreshCatalog(){ return api('/products').then(function(d){ index(d); renderGrid(); renderCart(); }).catch(function(){}); }
+  // Website switched off from BDT: a calm "back soon" screen; nobody can order (the server also refuses).
+  function showOffline(msg){
+    var d=document.createElement('div'); d.className='offline-screen'; d.setAttribute('role','dialog');
+    d.innerHTML='<div class="offline-card"><img src="/assets/img/logo-sm.png" alt="Ageless"><h2>We\'ll be right back</h2><p>'+esc(msg||'Our online store is closed for a moment. You can still visit us inside Eastland Mall.')+'</p></div>';
+    document.body.appendChild(d); document.body.style.overflow='hidden';
+  }
   function applySite(){
     var st=CFG.store||{}, si=CFG.site||{}, sale=CFG.sale;
     var ann=[sale?sale.label+(sale.ends?' — ends '+new Date(sale.ends+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):''):'', si.announcement].filter(Boolean);
@@ -311,6 +317,7 @@
   }
   Promise.all([api('/config').catch(function(){ return {paymentsEnabled:false,payInStore:true}; }), api('/products')]).then(function(r){
     CFG=r[0]; index(r[1]); applySite(); renderChips(); renderGrid(); renderCart(); fromHash();
+    if(CFG.offline&&CFG.offline.on) showOffline(CFG.offline.message);
   }).catch(function(){
     grid.innerHTML='<p class="shop-msg">The shop could not load right now. Please refresh, or visit Ageless inside Eastland Mall.</p>'; renderCart();
   });

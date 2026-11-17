@@ -91,6 +91,10 @@ export async function log(env, level, msg, detail) {
     await env.DB.prepare('INSERT INTO app_log (level, msg, detail, at) VALUES (?, ?, ?, ?)')
       .bind(level, String(msg).slice(0, 300), detail ? JSON.stringify(detail).slice(0, 2000) : null, nowIso()).run();
   } catch { /* logging must never break a request */ }
+  // Problems also go to BDT (customer details are removed there).
+  if (level === 'error' || level === 'warn') {
+    try { const b = await import('./bdt.js'); const i = b.issueFromLog(level, msg, detail); if (i) await b.recordIssue(env, i); } catch { /* never break */ }
+  }
 }
 
 export function siteUrl(request, env) {

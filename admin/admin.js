@@ -46,6 +46,7 @@
     return fetch('/api' + path, { method: opts.method || 'GET', headers: h, body: opts.body, credentials: 'same-origin' }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
         if (r.status === 401 && ['/admin/login', '/admin/setup', '/admin/me'].indexOf(path) < 0) { me = null; go('#/login'); throw new Error(j.error || 'Please log in.'); }
+        if (r.status >= 500 && window.AG_REPORT) window.AG_REPORT({ kind: 'failed_request', message: (opts.method || 'GET') + ' ' + path.split('?')[0] + ' → ' + r.status + ' ' + (j.error || ''), route: (opts.method || 'GET') + ' /api' + path.split('?')[0], status: r.status });
         if (!r.ok) { var e = new Error(j.error || 'Something went wrong.'); e.data = j; throw e; }
         return j;
       });
@@ -164,7 +165,7 @@
     window.scrollTo(0, 0);
     app.innerHTML = '<p class="muted center pad">Loading…</p>';
     var views = { home: viewHome, orders: parts[1] ? function () { viewOrder(parts[1]); } : viewOrders, products: parts[1] ? function () { viewProduct(parts[1]); } : viewProducts,
-      stock: viewStock, categories: viewCategories, settings: viewSettings, staff: parts[1] ? function () { viewActivity(parts[1]); } : viewStaff, activity: function () { viewActivity(null); }, outbox: viewOutbox, more: viewMore, log: viewLog };
+      stock: viewStock, categories: viewCategories, settings: viewSettings, staff: parts[1] ? function () { viewActivity(parts[1]); } : viewStaff, activity: function () { viewActivity(null); }, outbox: viewOutbox, more: viewMore, log: viewLog, it: viewIt };
     var need = { orders: 'orders', products: 'products', stock: 'stock', categories: 'products', settings: 'settings', staff: 'staff', activity: 'staff', outbox: 'orders', log: 'staff' }[v];
     if (need && !can(need)) { app.innerHTML = '<p class="alert">You don\'t have access to this page. Ask the owner if you need it.</p>'; return; }
     (views[v] || viewHome)();
@@ -319,10 +320,10 @@
       function stat(label, x) { return '<div class="stat"><span>' + label + '</span><b>' + money(x.cents) + '</b><span>' + x.n + ' order' + (x.n === 1 ? '' : 's') + '</span></div>'; }
       var open = d.byStatus.filter(function (s) { return ['paid', 'processing', 'awaiting_approval', 'ready_for_pickup'].indexOf(s.status) >= 0; }).reduce(function (t, s) { return t + s.n; }, 0);
       var check = [
-        [d.square.connected, 'Square connected' + (d.square.connected ? ' (' + esc(d.square.location || '') + ', ' + d.square.env + ')' : (me.role === 'owner' ? ' — <a href="#/settings">connect in Settings</a>' : ''))],
+        [d.square.connected, d.square.connected ? 'Square connected' + (d.square.location ? ' (' + esc(d.square.location) + ')' : '') : me.kind === 'main' ? 'Square not connected yet — <a href="#/settings">connect it in Settings</a>' : 'Waiting for Natan to connect Square'],
         [d.noQuantity === 0, d.noQuantity ? d.noQuantity + ' product(s) have no quantity yet — <a href="#/stock">set quantities</a> (they cannot be bought until you do)' : 'Every product has a quantity'],
-        [d.email.configured, d.email.configured ? 'Email sending is on' : 'Email sending is not set up yet — customer emails wait in <a href="#/outbox">Emails</a> (' + d.email.unsent + ' not sent)'],
       ];
+      if (me.kind === 'developer') check.push([d.email.configured, d.email.configured ? 'Customer emails are on' : 'Customer emails are off (' + d.email.unsent + ' waiting in <a href="#/outbox">Emails</a>)']);
       app.innerHTML = '<h1>Welcome, ' + esc(me.name.split(' ')[0]) + '</h1>' + guideCard(d) +
         (d.alerts.length ? '<div class="card"><h2>Needs attention</h2>' + d.alerts.map(function (a) { return '<div class="alert bad row between"><span>' + esc(a.message) + (a.order_id ? ' <a href="#/orders/' + a.order_id + '">Open order</a>' : '') + '</span><button class="btn small" data-res="' + a.id + '">Done</button></div>'; }).join('') + '</div>' : '') +
         (R ? '<div class="grid g4">' + stat('Today', R.today) + stat('Last 7 days', R.week) + stat('Last 30 days', R.month) + stat('All time', R.all) + '</div>' +
@@ -627,16 +628,25 @@
     var qs = new URLSearchParams(location.hash.split('?')[1] || '');
     api('/admin/settings').then(function (r) {
       var s = r.settings, q = r.square, tiers = []; try { tiers = JSON.parse(s.shipping_tiers || '[]'); } catch (e) {}
-      var sqMsg = qs.get('square') === 'connected' ? '<p class="alert" style="border-color:var(--ok)">Square is connected. Next: press "Send all products to Square".</p>' : qs.get('square') === 'error' ? '<p class="alert bad">Square connection failed: ' + esc(qs.get('msg') || '') + '</p>' : qs.get('square') === 'denied' ? '<p class="alert bad">Square connection was canceled.</p>' : '';
+      var isNatan = me.kind === 'main';
+      var sqMsg = !isNatan ? '' : qs.get('square') === 'connected' ? '<p class="alert" style="border-color:var(--ok)">Square is connected. Next: tap "Send all products to Square".</p>' : qs.get('square') === 'error' ? '<p class="alert bad">Square could not connect. Please try again. If it keeps happening, tell Israel.</p>' : qs.get('square') === 'denied' ? '<p class="alert">You did not allow access on Square\'s page, so nothing changed.</p>' : '';
+      var sqBody;
+      if (!isNatan) {
+        // Everyone except Natan only sees whether Square is connected.
+        sqBody = q.connected ? '<p><span class="badge b-ok">✓ Square connected</span> ' + esc(q.locationName || '') + '</p>'
+          : '<p><span class="badge b-warn">Waiting for Natan to connect Square</span></p><p class="muted small">Only Natan can connect Square, from his own login.</p>';
+      } else if (!q.appConfigured) {
+        sqBody = '<p>Online card payments are not ready yet. Israel is finishing this part.</p>';
+      } else if (q.connected) {
+        sqBody = '<p><span class="badge b-ok">✓ Connected</span> ' + esc(q.locationName || '') + '<br><span class="muted small">Since ' + when(q.connectedAt) + '. Money from website orders goes straight into your Square account.</span></p>' +
+          (q.locations.length > 1 ? '<label>Store location<select id="loc">' + q.locations.map(function (l) { return '<option value="' + esc(l.id) + '"' + (l.id === q.locationId ? ' selected' : '') + '>' + esc(l.name) + '</option>'; }).join('') + '</select></label>' : '') +
+          '<div class="row" style="margin-top:10px"><button class="btn primary" id="pushAll">Send all products to Square</button><button class="btn" id="pullStock">Get stock & prices from Square</button><button class="btn" id="imp">Import items from Square</button></div>' +
+          '<div class="sep"></div><button class="btn danger small" id="disc">Disconnect Square</button>';
+      } else {
+        sqBody = '<p>Connect your Square account so customers can pay online. You log in on Square\'s own page and tap Allow. We never see your Square password.</p><button class="btn primary big" id="conn">Connect Square</button>';
+      }
       app.innerHTML = '<h1>Settings</h1>' + sqMsg +
-        '<div class="card"><h2>Square payments</h2>' +
-        (!q.appConfigured ? '<p class="alert">The Square app keys are not on the server yet (your developer adds SQUARE_APP_ID, SQUARE_APP_SECRET and SQUARE_ENV). Then the Connect button appears here.</p>' :
-          q.connected ? '<p><span class="badge b-ok">Connected</span> ' + esc(q.locationName || '') + ' · ' + (q.env === 'production' ? 'Live payments' : '<span class="badge b-warn">Sandbox (test cards only)</span>') + '<br><span class="muted small">Since ' + when(q.connectedAt) + '. Every website payment goes straight into this Square account.</span></p>' +
-            (q.locations.length > 1 ? '<label>Store location<select id="loc">' + q.locations.map(function (l) { return '<option value="' + esc(l.id) + '"' + (l.id === q.locationId ? ' selected' : '') + '>' + esc(l.name) + '</option>'; }).join('') + '</select></label>' : '') +
-            '<div class="row" style="margin-top:10px"><button class="btn primary" id="pushAll">Send all products to Square</button><button class="btn" id="pullStock">Get stock & prices from Square</button><button class="btn" id="imp">Import items from Square</button></div>' +
-            '<div class="sep"></div><button class="btn danger small" id="disc">Disconnect Square</button>'
-            : '<p>Connect Nathan\'s Square account so customers can pay online. You will log in on Square\'s own page and approve access; we never see your Square password.</p><button class="btn primary big" id="conn">Connect Square</button>') +
-        '<div class="sep"></div><p class="muted small">Webhook URL for the Square app: <code>' + esc(q.webhookUrl) + '</code> · signature key ' + (q.webhookSecretSet ? '<span class="badge b-ok">set</span>' : '<span class="badge b-warn">not set</span>') + '</p></div>' +
+        '<div class="card"><h2>Square payments</h2>' + sqBody + '</div>' +
         '<form class="card form" id="sf"><h2>Pickup & shipping</h2>' +
         '<label class="check"><input type="checkbox" name="pickup_enabled"' + (s.pickup_enabled === '1' ? ' checked' : '') + '> Offer in-store pickup</label>' +
         '<label>Pickup instructions (shown at checkout and in emails)<textarea name="pickup_instructions" rows="2">' + esc(s.pickup_instructions) + '</textarea></label>' +
@@ -809,7 +819,7 @@
     var id = new URLSearchParams(location.hash.split('?')[1] || '').get('id');
     if (id) {
       return api('/admin/outbox/' + id).then(function (r) {
-        var m = r.email; app.innerHTML = '<a href="#/outbox" class="muted small">← Emails</a><h1>' + esc(m.subject) + '</h1><p>To ' + esc(m.to_email) + ' · ' + mailBadge(m.status) + (m.error ? ' <span class="small muted">' + esc(m.error) + '</span>' : '') + '</p>' +
+        var m = r.email; app.innerHTML = '<a href="#/outbox" class="muted small">← Emails</a><h1>' + esc(m.subject) + '</h1><p>To ' + esc(m.to_email) + ' · ' + mailBadge(m.status) + (m.error && me.kind === 'developer' ? ' <span class="small muted">' + esc(m.error) + '</span>' : '') + '</p>' +
           (m.status !== 'sent' && m.to_email.indexOf('@') > 0 ? '<p><a class="btn primary" href="mailto:' + encodeURIComponent(m.to_email) + '?subject=' + encodeURIComponent(m.subject) + '">Send it from my email app</a></p>' : '') +
           '<iframe class="mail" sandbox="" title="Email preview"></iframe>';
         $('iframe.mail').srcdoc = m.body_html;
@@ -824,12 +834,56 @@
       app.innerHTML = '<h1>System log</h1><div class="card"><table class="simple">' + r.log.map(function (l) { return '<tr><td class="small">' + when(l.at) + '</td><td><span class="badge ' + (l.level === 'error' ? 'b-bad' : l.level === 'warn' ? 'b-warn' : '') + '">' + esc(l.level) + '</span></td><td>' + esc(l.msg) + (l.detail ? '<br><span class="muted small">' + esc(l.detail) + '</span>' : '') + '</td></tr>'; }).join('') + '</table></div>';
     }).catch(function (e) { app.innerHTML = '<p class="alert bad">' + esc(e.message) + '</p>'; });
   }
+
+  // ---------------- IT (developer only): BDT connection, errors, technical status ----------------
+  function viewIt() {
+    if (me.kind !== 'developer') { app.innerHTML = '<p class="alert">This page is for the developer.</p>'; return; }
+    api('/admin/it').then(function (r) {
+      var yes = function (ok, a, b) { return ok ? '<span class="badge b-ok">' + a + '</span>' : '<span class="badge b-warn">' + b + '</span>'; };
+      var keys = r.keys.filter(function (k) { return !k.revoked_at; });
+      app.innerHTML = '<h1>IT</h1><p class="muted small">Only you see this page. Version ' + esc(r.version) + '.</p>' +
+        '<div class="card"><h2>Black Daddy Tech connection</h2>' +
+        (r.link ? '<p>' + yes(true, 'Connected to BDT', '') + ' since ' + when(r.link.connectedAt) + (r.link.lastPullAt ? ' · BDT last checked in ' + when(r.link.lastPullAt) : '') + '</p>'
+          : '<p>' + yes(false, '', 'Not connected yet') + '</p>') +
+        '<ol class="guide-steps small"><li>Tap <b>Create connection key</b>.</li><li>Copy the key (it starts with <code>bdtc1_</code>). It is shown only once.</li><li>In BDT Admin go to <b>Websites → Add a website → Connect with API key</b> and paste it.</li></ol>' +
+        '<p class="small muted">BDT gets: status, health checks, traffic, order and sales totals, every error the moment it happens, the website on/off switch, the announcement banner, product price / stock / visibility, and contact links. BDT never gets customer names, emails, phone numbers or addresses.</p>' +
+        '<div class="row"><button class="btn primary" id="newKey">Create connection key</button></div>' +
+        (keys.length ? '<div class="sep"></div><table class="simple">' + keys.map(function (k) { return '<tr><td>Key …' + esc(k.hint) + '<br><span class="muted small">made ' + when(k.created_at) + (k.last_used_at ? ' · last used ' + when(k.last_used_at) : ' · not used yet') + '</span></td><td class="right"><button class="btn small danger" data-revoke="' + k.id + '">Revoke</button></td></tr>'; }).join('') + '</table>' : '') +
+        '</div>' +
+        '<div class="card"><h2>Website</h2><p>' + (r.offline ? '<span class="badge b-bad">Switched OFF from BDT</span> customers see "We\'ll be right back" and cannot order.' : '<span class="badge b-ok">Online</span>') + '</p></div>' +
+        '<div class="card"><h2>Open issues (' + r.issues.length + ')</h2>' + (r.issues.length ? '<div class="list">' + r.issues.map(function (i) {
+          return '<div class="item" style="grid-template-columns:1fr"><div class="row between"><span><span class="badge ' + (i.level === 'warning' ? 'b-warn' : 'b-bad') + '">' + esc(i.kind) + '</span> <b>' + esc(i.title) + '</b> <span class="muted small">×' + i.count + ' · last ' + when(i.lastSeen) + '</span></span><button class="btn small" data-clear="' + esc(i.id) + '">Fixed</button></div>' +
+            (i.message ? '<div class="small muted">' + esc(i.message) + '</div>' : '') + (i.stack ? '<details class="small"><summary>Details</summary><pre style="white-space:pre-wrap">' + esc(i.stack) + '</pre></details>' : '') + '</div>';
+        }).join('') + '</div>' : '<p class="muted">No open issues.</p>') + '</div>' +
+        '<div class="card"><h2>Square (technical)</h2><table class="simple">' +
+          '<tr><td>App keys on the server</td><td>' + yes(r.square.appConfigured, 'Yes', 'Missing') + ' ' + esc(r.square.env) + '</td></tr>' +
+          '<tr><td>Natan\'s Square</td><td>' + (r.square.connected ? yes(true, 'Connected', '') + ' ' + esc(r.square.location || '') + ' · ' + when(r.square.connectedAt) : yes(false, '', 'Waiting for Natan to connect')) + '</td></tr>' +
+          '<tr><td>Webhook URL</td><td><code style="word-break:break-all">' + esc(r.square.webhookUrl) + '</code></td></tr>' +
+          '<tr><td>Webhook signature key</td><td>' + yes(r.square.webhookKeySet, 'Set', 'Not set') + '</td></tr></table></div>' +
+        '<div class="card"><h2>Email (technical)</h2><table class="simple"><tr><td>Resend</td><td>' + yes(r.email.configured, 'On', 'Off') + ' ' + esc(r.email.from || '') + '</td></tr>' +
+          '<tr><td>Emails not sent</td><td>' + r.email.unsent + ' · <a href="#/outbox">open Emails</a></td></tr>' +
+          '<tr><td>AI assistant key</td><td>' + yes(r.ai.configured, 'Set', 'Not set') + '</td></tr></table><p><a href="#/log">System log</a></p></div>' +
+        (r.messages.length ? '<div class="card"><h2>Messages from BDT</h2>' + r.messages.map(function (m) { return '<p><b>' + esc(m.from_name || 'BDT') + '</b> <span class="muted small">' + when(m.sent_at) + '</span><br>' + esc(m.body) + '</p>'; }).join('') + '</div>' : '');
+      $('#newKey').onclick = function () {
+        if (!confirm('Create a new BDT connection key? Old keys keep working until you revoke them.')) return;
+        act(this, api('/admin/it/keys', { method: 'POST' })).then(function (k) {
+          var m = modal('<h2>BDT connection key</h2><p>Copy it now. It will not be shown again.</p><textarea readonly rows="4" style="width:100%" class="notr" onclick="this.select()">' + esc(k.key) + '</textarea>' +
+            '<div class="row" style="margin-top:10px"><button class="btn primary" id="kCopy">Copy key</button><button class="btn" data-close>Done</button></div>');
+          $('#kCopy', m).onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(k.key) : Promise.reject()).then(function () { toast('Key copied'); }, function () { toast('Select the key and copy it', true); }); };
+          m.addEventListener('click', function (e) { if (e.target.hasAttribute('data-close')) viewIt(); });
+        });
+      };
+      $$('[data-revoke]').forEach(function (b) { b.onclick = function () { if (confirm('Revoke this key? BDT will lose access until you paste a new key there.')) act(b, api('/admin/it/keys/' + b.dataset.revoke + '/revoke', { method: 'POST' }), 'Key revoked').then(viewIt); }; });
+      $$('[data-clear]').forEach(function (b) { b.onclick = function () { act(b, api('/admin/it/issues/' + encodeURIComponent(b.dataset.clear) + '/clear', { method: 'POST' }), 'Marked fixed').then(viewIt); }; });
+    }).catch(function (e) { app.innerHTML = '<p class="alert bad">' + esc(e.message) + '</p>'; });
+  }
   function viewMore() {
     var links = [];
     if (can('products')) links.push(['#/categories', 'Categories']);
     if (can('orders')) links.push(['#/outbox', 'Emails']);
     if (can('settings')) links.push(['#/settings', 'Settings & Square']);
-    if (can('staff')) links.push(['#/staff', 'Staff & employee access'], ['#/activity', 'Staff activity'], ['#/log', 'System log']);
+    if (can('staff')) links.push(['#/staff', 'Staff & employee access'], ['#/activity', 'Staff activity']);
+    if (me.kind === 'developer') links.push(['#/it', 'IT (developer)'], ['#/log', 'System log']);
     if (me.role === 'owner') links.push(['#/home?guide=1', 'Welcome guide (Square + workers)']);
     app.innerHTML = '<h1>More</h1><div class="list">' + links.map(function (l) { return '<a class="item" style="grid-template-columns:1fr" href="' + l[0] + '"><span class="t">' + l[1] + '</span></a>'; }).join('') +
       '<button class="item btn" style="grid-template-columns:1fr" id="lo2">Log out (' + esc(me.name) + ')</button></div>';

@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword, passwordProblem, createSession, clearCook
 import { aiChat, aiReview, ruleCheck, aiConfigured, allowedPath, riskOf } from '../_lib/ai.js';
 import * as sq from '../_lib/square.js';
 import { notify } from '../_lib/email.js';
+import * as bdt from '../_lib/bdt.js';
 import { cleanupExpired, availability, publicCatalog, placeHolds, event, loadOrder, markPaid, raiseAlert, orderLink, assertTransition, imgUrl } from '../_lib/store.js';
 
 const routes = [];
@@ -22,7 +23,9 @@ export async function onRequest(ctx) {
       if (r.method !== request.method) continue;
       const m = path.match(r.re);
       if (m) {
+        const t0 = Date.now();
         const res = await r.fn({ ...ctx, url, params: m.groups || {} });
+        if (!path.startsWith('/it/bdt/')) { const job = bdt.countRequest(env, Date.now() - t0, res.status >= 500, path === '/config'); ctx.waitUntil ? ctx.waitUntil(job) : await job; }
         const st = request.__staff;
         if (st && res.status < 400 && (request.method !== 'GET' || /^\/admin\/orders\/\d+$/.test(path))) {
           const what = describe(request.method, path);
@@ -35,6 +38,7 @@ export async function onRequest(ctx) {
   } catch (e) {
     if (e instanceof HttpError) return json({ error: e.message, ...(e.extra || {}) }, e.status);
     await log(env, 'error', 'Unhandled API error', { path, method: request.method, error: String(e && e.stack || e) });
+    await bdt.countRequest(env, 0, true, false);
     return json({ error: e.status && e.message ? e.message : 'Something went wrong. Please try again.' }, e.status && e.status >= 400 && e.status < 600 ? (e.status === 401 ? 502 : e.status) : 500);
   }
 }
@@ -106,8 +110,14 @@ on('GET', '/config', async ({ env }) => {
     store: { phone: s.store_phone || null, address: s.store_address || '', hours: safeJson(s.store_hours, []) },
     site: { announcement: s.site_announcement || '', marquee: safeJson(s.marquee_items, []) },
     sale: saleInfo(s),
+    offline: s.site_offline === '1' ? { on: true, message: s.site_offline_message || '' } : null,
   });
 });
+// While the website is switched off (from BDT), nobody can order.
+async function assertOnline(env) {
+  const s = await getSettings(env);
+  if (s.site_offline === '1') fail(503, s.site_offline_message || 'The store website is closed for a moment. Please try again soon.');
+}
 
 on('GET', '/products', async ({ env }) => {
   await cleanupExpired(env);
@@ -207,6 +217,7 @@ on('POST', '/checkout/quote', async ({ env, request }) => {
 });
 
 on('POST', '/checkout/start', async ({ env, request }) => {
+  await assertOnline(env);
   await limitOr429(env, request, 'checkout', 15, 600);
   if (!(await sq.isConnected(env))) fail(409, 'Online checkout is coming soon. To buy now, visit Ageless inside Eastland Mall.');
   await cleanupExpired(env);
@@ -260,6 +271,7 @@ async function insertItems(env, orderId, lines) {
 // Pay at pickup: no card. Items come off the shelf count right away (atomic, no overselling);
 // the buyer pays at the counter. Staff mark it paid, or cancel a no-show (stock goes back).
 on('POST', '/checkout/reserve', async ({ env, request }) => {
+  await assertOnline(env);
   await limitOr429(env, request, 'reserve', 8, 600);
   await cleanupExpired(env);
   const b = await readJson(request);
@@ -314,6 +326,7 @@ async function orderByToken(env, codeParam, tok) {
 }
 
 on('POST', '/checkout/pay', async ({ env, request }) => {
+  await assertOnline(env);
   await limitOr429(env, request, 'pay', 20, 600);
   const b = await readJson(request);
   const o = await orderByToken(env, b.code, b.token);
@@ -467,7 +480,7 @@ on('GET', '/square/callback', async ({ env, url, request }) => {
   const site = siteUrl(request, env);
   if (url.searchParams.get('error')) return Response.redirect(`${site}/admin/#/settings?square=denied`, 302);
   try { await sq.completeOAuth(env, str(url.searchParams.get('code'), 500), str(url.searchParams.get('state'), 100), `${site}/api/square/callback`); }
-  catch (e) { await log(env, 'error', 'Square connect failed', { e: e.message }); return Response.redirect(`${site}/admin/#/settings?square=error&msg=${encodeURIComponent(e.message)}`, 302); }
+  catch (e) { await log(env, 'error', 'Square connect failed', { e: e.message }); return Response.redirect(`${site}/admin/#/settings?square=error`, 302); }
   return Response.redirect(`${site}/admin/#/settings?square=connected`, 302);
 });
 
@@ -791,7 +804,7 @@ on('POST', '/admin/ai/chat', async (ctx) => {
   const history = (Array.isArray(b.messages) ? b.messages : []).filter((m) => m && typeof m.content === 'string').slice(-16);
   if (!history.length) fail(400, 'Ask something.');
   try { return json(await aiChat(env, me, history, (method, path, body) => internalCall(ctx, method, path, body))); }
-  catch (e) { await log(env, 'warn', 'AI chat failed', { e: String(e) }); fail(502, e.message || 'The assistant is unavailable right now.'); }
+  catch (e) { await log(env, 'warn', 'AI chat failed', { e: String(e) }); fail(502, 'The assistant is busy right now. Please try again in a minute.'); }
 });
 on('POST', '/admin/ai/apply', async (ctx) => {
   const { env, request } = ctx;
@@ -1244,11 +1257,14 @@ on('POST', '/admin/square/location', async ({ env, request }) => {
   return json({ ok: true });
 });
 on('GET', '/admin/square/connect', async ({ env, request }) => {
-  await requireStaff(env, request, 'settings');
+  const me = await requireStaff(env, request, 'settings');
+  if (me.kind !== 'main') fail(403, 'Only Natan can connect Square.');
   return json({ url: await sq.authorizeUrl(env, `${siteUrl(request, env)}/api/square/callback`) });
 });
 on('POST', '/admin/square/disconnect', async ({ env, request }) => {
-  const me = await requireStaff(env, request, 'settings'); await sq.disconnect(env);
+  const me = await requireStaff(env, request, 'settings');
+  if (me.kind !== 'main') fail(403, 'Only Natan can disconnect Square.');
+  await sq.disconnect(env);
   await log(env, 'info', 'Square disconnected', { by: me.email }); return json({ ok: true });
 });
 
@@ -1346,6 +1362,239 @@ on('GET', '/admin/outbox/:id', async ({ env, request, params }) => {
   return json({ email: await env.DB.prepare('SELECT * FROM outbox WHERE id = ?').bind(int(params.id, 1)).first() });
 });
 on('GET', '/admin/log', async ({ env, request }) => {
-  await requireStaff(env, request, 'staff');
+  await requireStaff(env, request, 'developer');
   return json({ log: (await env.DB.prepare('SELECT * FROM app_log ORDER BY id DESC LIMIT 200').all()).results });
+});
+
+// ======================= BDT Site Protocol v1 (/api/it/bdt/*) =======================
+// Black Daddy Tech's admin connects with one key made on the developer's IT page.
+// Technical data + store controls only. Never customer names, emails, phones or addresses.
+const BDT_COMMANDS = {
+  ping: 'Check the site answers',
+  revalidate: 'Clear caches (nothing to clear on this site)',
+  maintenance: 'Back-soon mode: { on, message } — customers see a message and cannot order; the admin keeps working',
+  power: 'Website on/off: { on, message } — same as maintenance',
+  announcement: 'Banner across the top of the website: { text } (text null removes it)',
+  product: 'Change one product: { slug, variation?, price (dollars), stock (whole number), hidden }',
+  'product-reset': 'Not available: changes made here are real store changes and stay',
+  settings: 'Contact & social links: { email, phone, facebook, instagram, tiktok }',
+  'clear-issue': 'Mark an issue fixed: { id }',
+};
+
+async function bdtSummary(env) {
+  const s = await getSettings(env);
+  const PAID = "('paid','processing','awaiting_approval','ready_for_pickup','shipped','completed','refunded')";
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const since = (d) => new Date(Date.now() - d * 864e5).toISOString();
+  const rev = async (from) => env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total_cents - refunded_cents), 0) AS cents FROM orders WHERE status IN ${PAID} AND paid_at >= ?`).bind(from).first();
+  const cnt = async (from) => (await env.DB.prepare("SELECT COUNT(*) AS n FROM orders WHERE created_at >= ? AND status NOT IN ('expired')").bind(from).first()).n;
+  const [rt, rw, rm, ra] = await Promise.all([rev(day.toISOString()), rev(since(7)), rev(since(30)), rev('0')]);
+  const [ot, ow, om, oa] = await Promise.all([cnt(day.toISOString()), cnt(since(7)), cnt(since(30)), cnt('0')]);
+  const open = (await env.DB.prepare("SELECT COUNT(*) AS n FROM orders WHERE status IN ('paid','processing','awaiting_approval','ready_for_pickup')").first()).n;
+  const noQty = (await env.DB.prepare("SELECT COUNT(DISTINCT p.id) AS n FROM variations v JOIN products p ON p.id = v.product_id WHERE p.status = 'active' AND v.stock IS NULL").first()).n;
+  const unsent = (await env.DB.prepare("SELECT COUNT(*) AS n FROM outbox WHERE status != 'sent'").first()).n;
+  const recent = (await env.DB.prepare("SELECT code, fulfillment, status, total_cents, created_at FROM orders WHERE status NOT IN ('expired') ORDER BY id DESC LIMIT 15").all()).results
+    .map((o) => ({ kind: 'order', title: `Order ${o.code} — ${o.fulfillment === 'shipping' ? 'delivery' : 'pickup'} — ${o.status.replace(/_/g, ' ')}`, amountCents: o.total_cents, at: o.created_at }));
+  const m60 = await bdt.metrics(env, 60), m1d = await bdt.metrics(env, 1440);
+  const connected = await sq.isConnected(env);
+  const emailOn = !!(env.RESEND_API_KEY && env.EMAIL_FROM);
+  const off = s.site_offline === '1';
+  const offState = { on: off, message: s.site_offline_message || null, since: s.site_offline_since || null };
+  const openIssues = (await env.DB.prepare("SELECT COUNT(*) AS n FROM site_issues WHERE cleared_at IS NULL AND level IN ('error','fatal') AND last_seen >= ?").bind(since(1)).first()).n;
+  return {
+    status: off ? 'degraded' : openIssues ? 'degraded' : 'ok',
+    version: bdt.version(env),
+    maintenance: offState,
+    power: { on: !off, message: offState.message, since: offState.since },
+    runtime: { platform: 'Cloudflare Pages Functions', region: null },
+    checks: [
+      { name: 'database', ok: true },
+      { name: 'square', ok: connected, note: connected ? 'connected' : 'waiting for the owner to connect' },
+      { name: 'email', ok: emailOn, note: emailOn ? (unsent ? `${unsent} not sent` : 'sending') : 'not configured' },
+      { name: 'webhook key', ok: !!env.SQUARE_WEBHOOK_SIGNATURE_KEY },
+    ],
+    metrics: { windowMinutes: 60, requests: m60.requests, errors: m60.errors, errorRate: m60.errorRate, p50Ms: m60.avgMs,
+      traffic: { pageviews: m1d.pageviews, windowMinutes: 1440 } },
+    business: {
+      currency: 'usd',
+      orders: { today: ot, week: ow, month: om, total: oa },
+      revenueCents: { today: rt.cents, week: rw.cents, month: rm.cents, total: ra.cents },
+      custom: [
+        { label: 'Open orders', value: open, hint: 'need packing or pickup' },
+        { label: 'Products without a quantity', value: noQty, hint: 'cannot be bought online' },
+        { label: 'Square', value: connected ? 'Connected' : 'Not connected', hint: connected ? '' : 'Natan connects it' },
+      ],
+      recent,
+    },
+  };
+}
+
+on('POST', '/it/bdt/connect', async ({ env, request }) => {
+  await bdt.requireBdt(env, request);
+  const b = await readJson(request), x = b.bdt || {};
+  if (!/^https:\/\//.test(String(x.url || '')) && !/^http:\/\/localhost/.test(String(x.url || ''))) fail(400, 'bdt.url must be https');
+  if (!x.siteId || !x.secret) fail(400, 'bdt.siteId and bdt.secret are required');
+  await env.DB.prepare(`INSERT INTO bdt_link (id, bdt_url, site_id, secret_enc, connected_at) VALUES (1, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET bdt_url = excluded.bdt_url, site_id = excluded.site_id, secret_enc = excluded.secret_enc, connected_at = excluded.connected_at`)
+    .bind(String(x.url).slice(0, 300), String(x.siteId).slice(0, 100), await bdt.encrypt(env, String(x.secret)), nowIso()).run();
+  await log(env, 'info', 'Connected to BDT', { site: x.siteId });
+  const site = siteUrl(request, env);
+  return json({ protocol: bdt.PROTOCOL, site: { name: 'Ageless', url: site, adminUrl: `${site}/admin/`, itUrl: `${site}/admin/#/it` },
+    version: bdt.version(env), capabilities: bdt.CAPABILITIES });
+});
+on('GET', '/it/bdt/summary', async ({ env, request }) => { await bdt.requireBdt(env, request); return json(await bdtSummary(env)); });
+on('GET', '/it/bdt/info', async ({ env, request }) => {
+  await bdt.requireBdt(env, request);
+  const c = async (q) => (await env.DB.prepare(q).first()).n;
+  return json({
+    app: { name: 'Ageless', description: 'Anime & collectibles store website with online ordering (Eastland Mall, Evansville IN)', framework: 'Cloudflare Pages + Functions, D1, vanilla JS', repo: 'https://github.com/ugwuchibueze710-lang/ageless-' },
+    versions: { app: bdt.version(env) },
+    integrations: [
+      { name: 'Square', configured: sq.appConfigured(env), ok: await sq.isConnected(env) },
+      { name: 'Square webhook key', configured: !!env.SQUARE_WEBHOOK_SIGNATURE_KEY },
+      { name: 'Resend (email)', configured: !!env.RESEND_API_KEY },
+      { name: 'Groq (AI assistant)', configured: !!env.GROQ_API_KEY },
+      { name: 'Cloudflare D1', configured: true, ok: true },
+    ],
+    routes: routes.filter((r) => !String(r.re).includes('it\\/bdt')).map((r) => ({ method: r.method, path: String(r.re).slice(2, -2).replace(/\\\//g, '/').replace(/\(\?<(\w+)>\[\^\/\]\+\)/g, ':$1'), kind: 'api' }))
+      .concat([{ path: '/', kind: 'page' }, { path: '/order.html', kind: 'page' }, { path: '/admin/', kind: 'page' }]),
+    counts: { products: await c("SELECT COUNT(*) AS n FROM products WHERE status != 'deleted'"), orders: await c('SELECT COUNT(*) AS n FROM orders'), staff: await c('SELECT COUNT(*) AS n FROM staff WHERE active = 1') },
+  });
+});
+on('GET', '/it/bdt/issues', async ({ env, request, url }) => {
+  await bdt.requireBdt(env, request);
+  const since = url.searchParams.get('since') || '0', limit = Math.min(int(url.searchParams.get('limit')) || 200, 500);
+  const rows = (await env.DB.prepare('SELECT * FROM site_issues WHERE last_seen > ? ORDER BY last_seen ASC LIMIT ?').bind(since, limit).all()).results;
+  return json({ issues: rows.map(bdt.issueShape), cursor: rows.length ? rows[rows.length - 1].last_seen : since });
+});
+on('GET', '/it/bdt/control', async ({ env, request }) => {
+  await bdt.requireBdt(env, request);
+  const s = await getSettings(env), site = siteUrl(request, env), off = s.site_offline === '1';
+  const prods = (await env.DB.prepare(`SELECT p.id, p.slug, p.name, p.status, c.name AS cat FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.status != 'deleted' ORDER BY p.sort, p.id`).all()).results;
+  const vars = (await env.DB.prepare('SELECT id, product_id, name, price_cents, stock FROM variations ORDER BY sort, id').all()).results;
+  return json({
+    version: bdt.version(env),
+    power: { on: !off, message: s.site_offline_message || null, since: s.site_offline_since || null },
+    maintenance: { on: off, message: s.site_offline_message || null, since: s.site_offline_since || null },
+    announcement: s.site_announcement ? { text: s.site_announcement, tone: 'info' } : null,
+    settings: { url: site, contact: { phone: s.store_phone || '', email: s.contact_email || '', address: s.store_address || '' },
+      social: { facebook: s.social_facebook || '', instagram: s.social_instagram || '', tiktok: s.social_tiktok || '' } },
+    products: prods.map((p) => ({ slug: p.slug, name: p.name, category: p.cat || undefined, hidden: p.status === 'hidden', fulfillment: 'pickup or delivery', url: `${site}/#p-${p.slug}`,
+      variations: vars.filter((v) => v.product_id === p.id).map((v) => ({ id: String(v.id), options: { option: v.name }, price: v.price_cents / 100, stock: v.stock })) })),
+    content: { marquee: safeJson(s.marquee_items, []), hours: safeJson(s.store_hours, []), sale: saleInfo(s) },
+    commands: BDT_COMMANDS,
+  });
+});
+on('POST', '/it/bdt/commands', async ({ env, request, waitUntil }) => {
+  await bdt.requireBdt(env, request);
+  const b = await readJson(request), a = b.args || {}, cmd = String(b.command || '');
+  const done = async (result) => { await log(env, 'info', `BDT command: ${cmd}`, { args: a }); return json({ ok: true, result }); };
+  switch (cmd) {
+    case 'ping': return json({ ok: true, result: { ok: true, version: bdt.version(env) } });
+    case 'revalidate': return done({ cleared: true });
+    case 'maintenance': case 'power': {
+      const off = cmd === 'maintenance' ? !!a.on : a.on === false;
+      await setSetting(env, 'site_offline', off ? '1' : '0');
+      await setSetting(env, 'site_offline_message', off ? str(a.message, 300) : '');
+      await setSetting(env, 'site_offline_since', off ? nowIso() : '');
+      return done({ websiteOn: !off });
+    }
+    case 'announcement': {
+      await setSetting(env, 'site_announcement', a.text == null ? '' : str(a.text, 180));
+      return done({ text: a.text == null ? null : str(a.text, 180) });
+    }
+    case 'product': {
+      const p = await env.DB.prepare("SELECT id FROM products WHERE slug = ? AND status != 'deleted'").bind(str(a.slug, 120)).first();
+      if (!p) return json({ ok: false, error: 'No product with that slug.' }, 404);
+      const vs = (await env.DB.prepare('SELECT id FROM variations WHERE product_id = ? ORDER BY sort, id').bind(p.id).all()).results;
+      const target = a.variation ? vs.filter((v) => String(v.id) === String(a.variation)) : vs;
+      if (!target.length) return json({ ok: false, error: 'No such variation.' }, 404);
+      const ops = [];
+      if (a.price != null) { const c = Math.round(Number(a.price) * 100); if (!Number.isFinite(c) || c < 0) return json({ ok: false, error: 'Price must be dollars, 0 or more.' }, 400);
+        target.forEach((v) => ops.push(env.DB.prepare('UPDATE variations SET price_cents = ? WHERE id = ?').bind(c, v.id))); ops.push(env.DB.prepare('UPDATE products SET price_confirmed = 1 WHERE id = ?').bind(p.id)); }
+      if ('stock' in a) { const st = a.stock === null ? null : int(a.stock); if (a.stock !== null && (st == null || st < 0)) return json({ ok: false, error: 'Stock must be a whole number.' }, 400);
+        target.forEach((v) => ops.push(env.DB.prepare('UPDATE variations SET stock = ? WHERE id = ?').bind(st, v.id))); }
+      if (typeof a.hidden === 'boolean') ops.push(env.DB.prepare('UPDATE products SET status = ? WHERE id = ?').bind(a.hidden ? 'hidden' : 'active', p.id));
+      if (!ops.length) return json({ ok: false, error: 'Nothing to change.' }, 400);
+      ops.push(env.DB.prepare('UPDATE products SET updated_at = ? WHERE id = ?').bind(nowIso(), p.id));
+      await env.DB.batch(ops);
+      if (await sq.isConnected(env)) { const job = syncProduct(env, p.id).catch(() => {}); waitUntil ? waitUntil(job) : await job; }
+      return done({ slug: a.slug, saved: true });
+    }
+    case 'product-reset': return json({ ok: false, error: 'Not available on this site: product changes are real store changes and stay as they are.' }, 400);
+    case 'settings': {
+      const map = { phone: 'store_phone', email: 'contact_email', facebook: 'social_facebook', instagram: 'social_instagram', tiktok: 'social_tiktok' };
+      for (const [k, key] of Object.entries(map)) if (k in a) {
+        const v = str(a[k], 200);
+        if (k === 'email' && v && !isEmail(v)) return json({ ok: false, error: 'That email address is not valid.' }, 400);
+        if (k !== 'email' && k !== 'phone' && v && !/^https:\/\//.test(v)) return json({ ok: false, error: `${k} must be a full https:// link.` }, 400);
+        await setSetting(env, key, v);
+      }
+      return done({ saved: Object.keys(a) });
+    }
+    case 'clear-issue': {
+      await env.DB.prepare('UPDATE site_issues SET cleared_at = ? WHERE id = ?').bind(nowIso(), str(a.id, 60)).run();
+      return done({ cleared: a.id });
+    }
+    default: return json({ ok: false, error: `Unknown command "${cmd}".` }, 400);
+  }
+});
+on('POST', '/it/bdt/messages', async ({ env, request }) => {
+  await bdt.requireBdt(env, request);
+  const b = await readJson(request);
+  await env.DB.prepare('INSERT OR IGNORE INTO bdt_messages (remote_id, from_name, body, sent_at, received_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(str(b.id, 80) || null, str(b.from?.name, 80) || 'BDT', str(b.body, 4000), str(b.sentAt, 40) || nowIso(), nowIso()).run();
+  return json({ ok: true });
+});
+on('POST', '/it/bdt/disconnect', async ({ env, request }) => {
+  await bdt.requireBdt(env, request);
+  await env.DB.prepare('DELETE FROM bdt_link WHERE id = 1').run();
+  await log(env, 'info', 'Disconnected from BDT');
+  return json({ ok: true });
+});
+
+// Browser crashes and failed requests from the website and admin pages (shown to BDT, never to customers).
+on('POST', '/it/report', async ({ env, request }) => {
+  await limitOr429(env, request, 'it-report', 30, 600);
+  const b = await readJson(request);
+  const kind = ['browser_error', 'failed_request', 'broken_button'].includes(b.kind) ? b.kind : 'browser_error';
+  const area = String(b.path || '').startsWith('/admin') ? 'admin' : 'website';
+  await bdt.recordIssue(env, { kind, level: 'error', source: 'browser', title: `${kind === 'failed_request' ? 'Request failed' : 'Page crash'} on the ${area}: ${str(b.message, 140)}`,
+    message: str(b.message, 500), stack: str(b.stack, 3000), path: str(b.path, 300), route: str(b.route, 120) || null, element: str(b.element, 120) || null,
+    meta: { status: int(b.status) || undefined, browser: str(request.headers.get('user-agent'), 160) } });
+  return json({ ok: true });
+});
+
+// ---------- developer IT page ----------
+on('GET', '/admin/it', async ({ env, request }) => {
+  await requireStaff(env, request, 'developer');
+  const link = await bdt.getLink(env);
+  const keys = (await env.DB.prepare('SELECT id, hint, created_at, revoked_at, last_used_at FROM bdt_keys ORDER BY id DESC LIMIT 20').all()).results;
+  const issues = (await env.DB.prepare('SELECT * FROM site_issues WHERE cleared_at IS NULL ORDER BY last_seen DESC LIMIT 50').all()).results.map(bdt.issueShape);
+  const msgs = (await env.DB.prepare('SELECT * FROM bdt_messages ORDER BY id DESC LIMIT 20').all()).results;
+  const c = await sq.connection(env), s = await getSettings(env);
+  const unsent = (await env.DB.prepare("SELECT COUNT(*) AS n FROM outbox WHERE status != 'sent'").first()).n;
+  return json({ link: link ? { bdtUrl: link.bdt_url, siteId: link.site_id, connectedAt: link.connected_at, lastPullAt: link.last_pull_at } : null, keys, issues, messages: msgs,
+    version: bdt.version(env), offline: s.site_offline === '1',
+    square: { appConfigured: sq.appConfigured(env), connected: await sq.isConnected(env), env: sq.squareEnv(env), location: c?.locationName || null, connectedAt: c?.connectedAt || null,
+      webhookUrl: `${siteUrl(request, env)}/api/square/webhook`, webhookKeySet: !!env.SQUARE_WEBHOOK_SIGNATURE_KEY },
+    email: { configured: !!(env.RESEND_API_KEY && env.EMAIL_FROM), from: env.EMAIL_FROM || null, unsent },
+    ai: { configured: !!env.GROQ_API_KEY } });
+});
+on('POST', '/admin/it/keys', async ({ env, request }) => {
+  const me = await requireStaff(env, request, 'developer');
+  const key = await bdt.createKey(env, siteUrl(request, env), me.id);
+  await log(env, 'info', 'BDT connection key created', { by: me.email });
+  return json({ key });
+});
+on('POST', '/admin/it/keys/:id/revoke', async ({ env, request, params }) => {
+  const me = await requireStaff(env, request, 'developer');
+  await env.DB.prepare('UPDATE bdt_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(nowIso(), int(params.id, 1)).run();
+  await log(env, 'info', 'BDT connection key revoked', { by: me.email });
+  return json({ ok: true });
+});
+on('POST', '/admin/it/issues/:id/clear', async ({ env, request, params }) => {
+  await requireStaff(env, request, 'developer');
+  await env.DB.prepare('UPDATE site_issues SET cleared_at = ? WHERE id = ?').bind(nowIso(), str(params.id, 60)).run();
+  return json({ ok: true });
 });
