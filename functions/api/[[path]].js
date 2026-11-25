@@ -1583,6 +1583,32 @@ on('POST', '/it/report', async ({ env, request }) => {
 });
 
 // ---------- developer IT page ----------
+// ---------- monthly bill from Black Daddy Tech (Natan + developer only) ----------
+// The bill, the price and the invoices live in BDT; this only shows them and opens Stripe's own pages.
+async function requireBillingViewer(env, request) {
+  const me = await requireStaff(env, request);
+  if (me.kind !== 'main' && me.kind !== 'developer') fail(403, 'Only Natan can see the website bill.');
+  return me;
+}
+on('GET', '/admin/billing', async ({ env, request }) => {
+  await requireBillingViewer(env, request);
+  let r;
+  try { r = await bdt.callBdt(env, '/api/connect/billing', { action: 'status' }); } catch { return json({ on: false, offline: true }); }
+  if (r.skipped || !r.data || r.status >= 400) return json({ on: false, offline: !r.skipped });
+  return json(r.data);
+});
+on('POST', '/admin/billing', async ({ env, request }) => {
+  const me = await requireBillingViewer(env, request); const b = await readJson(request);
+  const action = ['pay', 'autopay_on', 'autopay_off', 'card'].includes(b.action) ? b.action : fail(400, 'Unknown billing action.');
+  let r;
+  try { r = await bdt.callBdt(env, '/api/connect/billing', { action, returnUrl: `${siteUrl(request, env)}/admin/#/billing` }, 15000); }
+  catch { fail(502, 'Could not reach Black Daddy Tech right now. Please try again in a minute.'); }
+  if (r.skipped) fail(400, 'This website is not connected to Black Daddy Tech.');
+  if (r.status >= 400 || !r.data) fail(r.status >= 400 && r.status < 500 ? 400 : 502, (r.data && r.data.error) || 'Billing is not available right now.');
+  await activity(env, me, { pay: 'Opened the website bill payment page', autopay_on: 'Started autopay setup', autopay_off: 'Turned off autopay for the website bill', card: 'Opened card update for the website bill' }[action], null, request, '/admin/billing');
+  return json(r.data);
+});
+
 on('GET', '/admin/it', async ({ env, request }) => {
   await requireStaff(env, request, 'developer');
   const link = await bdt.getLink(env);

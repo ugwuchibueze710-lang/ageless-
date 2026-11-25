@@ -61,6 +61,11 @@ async function hmacHex(secret, data) {
   return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 export async function pushToBdt(env, path, body) {
+  const r = await callBdt(env, path, body, 6000);
+  return r.skipped ? r : { status: r.status };
+}
+/** Signed request to BDT that also returns BDT's JSON answer (used for the monthly bill). */
+export async function callBdt(env, path, body, timeoutMs = 10000) {
   const link = await getLink(env); if (!link) return { skipped: 'not connected' };
   const secret = await decrypt(env, link.secret_enc);
   const raw = JSON.stringify(body), ts = String(Math.floor(Date.now() / 1000)), nonce = token(12);
@@ -68,9 +73,10 @@ export async function pushToBdt(env, path, body) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-bdt-site': link.site_id, 'x-bdt-timestamp': ts, 'x-bdt-nonce': nonce,
       'x-bdt-signature': await hmacHex(secret, `${ts}.${nonce}.${raw}`), 'user-agent': 'Ageless/1.0' },
-    body: raw, signal: AbortSignal.timeout(6000),
+    body: raw, signal: AbortSignal.timeout(timeoutMs),
   });
-  return { status: res.status };
+  let data = null; try { data = await res.json(); } catch { /* not JSON */ }
+  return { status: res.status, data };
 }
 
 // ---------- issues ----------

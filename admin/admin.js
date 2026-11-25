@@ -165,7 +165,7 @@
     window.scrollTo(0, 0);
     app.innerHTML = '<p class="muted center pad">Loading…</p>';
     var views = { home: viewHome, orders: parts[1] ? function () { viewOrder(parts[1]); } : viewOrders, products: parts[1] ? function () { viewProduct(parts[1]); } : viewProducts,
-      stock: viewStock, categories: viewCategories, settings: viewSettings, staff: parts[1] ? function () { viewActivity(parts[1]); } : viewStaff, activity: function () { viewActivity(null); }, outbox: viewOutbox, more: viewMore, log: viewLog, it: viewIt };
+      stock: viewStock, categories: viewCategories, settings: viewSettings, staff: parts[1] ? function () { viewActivity(parts[1]); } : viewStaff, activity: function () { viewActivity(null); }, outbox: viewOutbox, more: viewMore, log: viewLog, it: viewIt, billing: viewBilling };
     var need = { orders: 'orders', products: 'products', stock: 'stock', categories: 'products', settings: 'settings', staff: 'staff', activity: 'staff', outbox: 'orders', log: 'staff' }[v];
     if (need && !can(need)) { app.innerHTML = '<p class="alert">You don\'t have access to this page. Ask the owner if you need it.</p>'; return; }
     (views[v] || viewHome)();
@@ -313,6 +313,65 @@
     };
   }
 
+  // ---------------- website bill (from Black Daddy Tech) ----------------
+  // Natan sees his monthly website bill here. Prices and invoices come from BDT; paying happens on Stripe's page.
+  function billDate(iso, short) { return iso ? new Date(iso).toLocaleDateString(ADMIN_I18N.lang === 'he' ? 'he-IL' : 'en-US', { month: short ? 'short' : 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : ''; }
+  function billWhen(days) { return days === 0 ? 'today' : days === 1 ? 'tomorrow' : days > 1 ? 'in ' + days + ' days' : (-days) + ' day' + (days === -1 ? '' : 's') + ' late'; }
+  // Reminder on Home: from 7 days before the due date (stronger at 2 days), and when overdue. Autopay: a gentle note only.
+  function billBanner() {
+    var box = $('#billBanner'); if (!box || (me.kind !== 'main' && me.kind !== 'developer')) return;
+    api('/admin/billing').then(function (b) {
+      if (!b || !b.on || b.daysUntilDue > 7 || b.state === 'paid') return;
+      var late = b.daysUntilDue < 0, soon = b.daysUntilDue <= 2;
+      var msg = b.autopay ? 'Your website bill of ' + money(b.plan.totalCents) + ' will be charged automatically on ' + billDate(b.dueDate) + '.'
+        : late ? 'Your website bill of ' + money(b.plan.totalCents) + ' was due on ' + billDate(b.dueDate) + ' (' + billWhen(b.daysUntilDue) + ').'
+        : 'Your website bill of ' + money(b.plan.totalCents) + ' is due ' + billWhen(b.daysUntilDue) + ' (' + billDate(b.dueDate) + ').';
+      box.innerHTML = '<a class="billnote ' + (b.autopay ? 'b-auto' : late ? 'b-late' : soon ? 'b-soon' : 'b-week') + '" href="#/billing"><span class="bn-ico">' + (b.autopay ? '✓' : late ? '!' : '🧾') + '</span><span>' + msg + '</span><span class="bn-go">' + (b.autopay ? 'View' : 'Pay now') + ' →</span></a>';
+    }).catch(function () {});
+  }
+  function viewBilling() {
+    if (me.kind !== 'main' && me.kind !== 'developer') { app.innerHTML = '<p class="alert">Only Natan can see the website bill.</p>'; return; }
+    var q = new URLSearchParams((location.hash.split('?')[1]) || '');
+    api('/admin/billing').then(function (b) {
+      var flash = q.get('billing') === 'paid' ? '<div class="alert ok">Thank you! Your payment went through. The invoice appears below in a moment.</div>'
+        : q.get('billing') === 'autopay' ? '<div class="alert ok">Autopay is on. Your card will be charged automatically on each due date.</div>'
+        : q.get('billing') === 'cancelled' ? '<div class="alert">No payment was made.</div>' : '';
+      if (!b.on) {
+        app.innerHTML = '<h1>Website bill</h1>' + flash + '<div class="card"><p>' + (b.offline ? 'The bill could not be loaded right now. Please try again later.' : 'There is no bill for this website right now.') + '</p><p class="muted small">Your website is built, hosted and managed by Black Daddy Tech.</p></div>';
+        return;
+      }
+      var late = b.daysUntilDue < 0, st = b.autopay ? ['b-ok', 'Autopay on'] : late ? ['b-bad', 'Overdue'] : b.state === 'due_soon' ? ['b-warn', 'Due ' + billWhen(b.daysUntilDue)] : ['b-ok', 'Paid'];
+      var lines = b.plan.lines.map(function (l) { return '<tr><td>' + esc(l.label) + '</td><td class="right">' + money(l.cents) + '</td></tr>'; }).join('');
+      var actions = '';
+      if (!b.paymentsReady) actions = '<p class="muted small">Online payment is being set up by Black Daddy Tech. You can pay as soon as it is ready.</p>';
+      else if (b.autopay) actions = '<p class="small">Your card is charged automatically on the ' + esc(b.plan.billDayLabel) + ' of every month. You get an invoice by email each time.</p><div class="row"><button class="btn" data-bill="card">Update card</button><button class="btn" data-bill="autopay_off">Turn off autopay</button></div>';
+      else {
+        actions = (b.canPay ? '<button class="btn primary big" data-bill="pay">Pay ' + money(b.plan.totalCents) + ' now</button>' : '<p class="small">Paid — thank you. The next bill opens on ' + billDate(b.payOpensOn) + '.</p>') +
+          '<div class="autobox"><b>Autopay</b><p class="muted small">Save your card once and it is paid automatically on the ' + esc(b.plan.billDayLabel) + ' of every month. Nothing is charged today. You can turn it off any time.</p>' +
+          (late || b.daysUntilDue === 0 ? '<p class="muted small">Pay this month\'s bill first, then you can turn on autopay.</p>' : '<button class="btn" data-bill="autopay_on">Turn on autopay</button>') + '</div>';
+      }
+      var inv = b.invoices && b.invoices.length ? '<table class="simple invtable"><tr><th>Date</th><th>Invoice</th><th>Period</th><th class="right">Amount</th><th></th></tr>' + b.invoices.map(function (i) {
+        return '<tr><td>' + billDate(i.paidAt, 1) + '</td><td>' + esc(i.number || (i.source === 'manual' ? 'Paid by hand' : '—')) + '</td><td>' + (i.periodStart ? billDate(i.periodStart, 1) + ' – ' : '') + billDate(i.periodEnd, 1) + '</td><td class="right">' + money(i.amountCents) + ' <span class="badge ' + (i.status === 'paid' ? 'b-ok' : 'b-bad') + '">' + esc(i.status) + '</span></td><td class="right">' +
+          (i.pdf ? '<a class="btn small" href="' + esc(i.pdf) + '" target="_blank" rel="noopener">PDF</a> ' : '') + (i.url ? '<a class="btn small" href="' + esc(i.url) + '" target="_blank" rel="noopener">View</a>' : '') + '</td></tr>';
+      }).join('') + '</table>' : '<p class="muted">No invoices yet. Your first invoice appears here after your first payment.</p>';
+      app.innerHTML = '<h1>Website bill</h1>' + flash +
+        '<div class="card billcard"><div class="row between"><div><div class="muted small">Black Daddy Tech · monthly</div><div class="bill-amt">' + money(b.plan.totalCents) + '<span class="muted">/month</span></div></div><span class="badge ' + st[0] + '">' + esc(st[1]) + '</span></div>' +
+          '<table class="simple">' + lines + '<tr><td><b>Total</b></td><td class="right"><b>' + money(b.plan.totalCents) + '</b></td></tr></table>' +
+          '<p class="bill-due">' + (late ? '<b class="bad">Was due ' + billDate(b.dueDate) + '</b>' : (b.autopay ? 'Next charge <b>' : 'Next due <b>') + billDate(b.dueDate) + '</b> <span class="muted">(' + billWhen(b.daysUntilDue) + ')</span>') + '</p>' + actions + '</div>' +
+        '<div class="card"><h2>Invoices</h2>' + inv + '</div>' +
+        '<p class="muted small">Payments are handled securely by Stripe. Your card number never touches this website.</p>';
+      $$('[data-bill]').forEach(function (btn) {
+        btn.onclick = function () {
+          var a = btn.dataset.bill;
+          if (a === 'autopay_off' && !confirm('Turn off autopay? You will pay each month from this page.')) return;
+          act(btn, api('/admin/billing', { method: 'POST', body: { action: a } })).then(function (r) {
+            if (r && r.url) location.href = r.url; else { toast('Done'); viewBilling(); }
+          }).catch(function (e) { toast(e.message, true); });
+        };
+      });
+    }).catch(function (e) { app.innerHTML = '<h1>Website bill</h1><p class="alert">' + esc(e.message) + '</p>'; });
+  }
+
   // ---------------- dashboard ----------------
   // Top 5 best sellers (same list the website shows as "Best Sellers", plus units and dollars for staff).
   function topCard(d) {
@@ -335,7 +394,7 @@
         [d.noQuantity === 0, d.noQuantity ? d.noQuantity + ' product(s) have no quantity yet — <a href="#/stock">set quantities</a> (they cannot be bought until you do)' : 'Every product has a quantity'],
       ];
       if (me.kind === 'developer') check.push([d.email.configured, d.email.configured ? 'Customer emails are on' : 'Customer emails are off (' + d.email.unsent + ' waiting in <a href="#/outbox">Emails</a>)']);
-      app.innerHTML = '<h1>Welcome, ' + esc(me.name.split(' ')[0]) + '</h1>' + guideCard(d) +
+      app.innerHTML = '<h1>Welcome, ' + esc(me.name.split(' ')[0]) + '</h1><div id="billBanner"></div>' + guideCard(d) +
         (d.alerts.length ? '<div class="card"><h2>Needs attention</h2>' + d.alerts.map(function (a) { return '<div class="alert bad row between"><span>' + esc(a.message) + (a.order_id ? ' <a href="#/orders/' + a.order_id + '">Open order</a>' : '') + '</span><button class="btn small" data-res="' + a.id + '">Done</button></div>'; }).join('') + '</div>' : '') +
         (R ? '<div class="grid g4">' + stat('Today', R.today) + stat('Last 7 days', R.week) + stat('Last 30 days', R.month) + stat('All time', R.all) + '</div>' +
         '<p class="muted small" style="margin:6px 0 14px">Sales after refunds, from paid website orders.</p>' : '') +
@@ -345,7 +404,7 @@
         '<div><div class="card"><h2>Setup checklist</h2><ul class="checklist">' + check.map(function (c) { return '<li class="' + (c[0] ? 'done' : '') + '">' + c[1] + '</li>'; }).join('') + '</ul></div>' +
         '<div class="card"><h2>Low stock</h2>' + (d.lowStock.length ? '<table class="simple">' + d.lowStock.map(function (l) { return '<tr><td>' + esc(l.name) + (l.vname !== 'Regular' ? ' — ' + esc(l.vname) : '') + '</td><td class="right">' + (l.stock <= 0 ? '<span class="badge b-bad">Out</span>' : l.stock + ' left') + '</td></tr>'; }).join('') + '</table>' : '<p class="muted">Nothing low.</p>') + '</div></div></div>';
       $$('[data-res]').forEach(function (b) { b.onclick = function () { act(b, api('/admin/alerts/' + b.dataset.res + '/resolve', { method: 'POST' })).then(viewHome); }; });
-      guideHooks();
+      guideHooks(); billBanner();
     }).catch(function (e) { app.innerHTML = '<p class="alert bad">' + esc(e.message) + '</p>'; });
   }
   function orderRow(o) {
@@ -996,6 +1055,7 @@
     if (can('orders')) links.push(['#/outbox', 'Emails']);
     if (can('settings')) links.push(['#/settings', 'Settings & Square']);
     if (can('staff')) links.push(['#/staff', 'Staff & employee access'], ['#/activity', 'Staff activity']);
+    if (me.kind === 'main' || me.kind === 'developer') links.push(['#/billing', 'Website bill (Black Daddy Tech)']);
     if (me.kind === 'developer') links.push(['#/it', 'IT (developer)'], ['#/log', 'System log']);
     if (me.role === 'owner') links.push(['#/home?guide=1', 'Welcome guide (Square + workers)']);
     app.innerHTML = '<h1>More</h1><div class="list">' + links.map(function (l) { return '<a class="item" style="grid-template-columns:1fr" href="' + l[0] + '"><span class="t">' + l[1] + '</span></a>'; }).join('') +

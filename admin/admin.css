@@ -240,3 +240,25 @@ html[dir="rtl"] input[type=email],html[dir="rtl"] input[type=tel],html[dir="rtl"
 @keyframes tpBar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 [dir="rtl"] .tp-num { text-align: left; } [dir="rtl"] .tp-bar i { transform-origin: right; }
 @media (prefers-reduced-motion: reduce) { .tops li, .tp-bar i { animation: none; opacity: 1; } }
+
+/* ---------- website bill (BDT) ---------- */
+.billnote { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; margin: 0 0 14px; text-decoration: none; color: inherit; border: 1px solid var(--line); animation: fadeUp .4s ease both; }
+.billnote .bn-ico { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; flex: 0 0 auto; background: rgba(255,255,255,.08); }
+.billnote .bn-go { margin-left: auto; white-space: nowrap; font-weight: 700; }
+.billnote.b-week { background: rgba(185,162,255,.10); border-color: rgba(185,162,255,.35); }
+.billnote.b-soon { background: rgba(255,196,87,.12); border-color: rgba(255,196,87,.5); }
+.billnote.b-late { background: rgba(255,93,115,.14); border-color: rgba(255,93,115,.6); }
+.billnote.b-late .bn-ico { background: #ff5d73; color: #fff; }
+.billnote.b-auto { background: rgba(110,231,160,.08); border-color: rgba(110,231,160,.35); }
+[dir="rtl"] .billnote .bn-go { margin-left: 0; margin-right: auto; }
+.billcard .bill-amt { font-size: 2rem; font-weight: 800; margin-top: 2px; }
+.billcard .bill-amt .muted { font-size: 1rem; font-weight: 500; }
+.billcard .simple { width: 100%; margin: 12px 0; }
+.billcard .bill-due { margin: 6px 0 14px; }
+.billcard .bad { color: #ff8095; }
+.autobox { margin-top: 16px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 12px; }
+.autobox p { margin: 4px 0 10px; }
+.invtable { width: 100%; }
+.invtable td, .invtable th { vertical-align: middle; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.alert.ok{border-color:#6ee7a0;background:rgba(110,231,160,.08)}
