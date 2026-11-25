@@ -341,6 +341,104 @@
       '<span><span class="t">' + esc(o.name) + '</span> <span class="muted small">' + esc(o.code) + '</span><br>' + fulBadge(o.fulfillment) + ' ' + statusBadge(o.status) + (o.payment_method === 'store' && !o.paid_at && ['canceled','expired'].indexOf(o.status) < 0 ? ' <span class="badge b-warn">Pay at pickup</span>' : '') + '</span>' +
       '<span class="right"><span class="money">' + money(o.total_cents) + '</span><br><span class="muted small">' + when(o.created_at) + '</span></span></a>';
   }
+  // ---------- order cards: customer on top, every item stacked with its photo, destination at the bottom ----------
+  var OPEN = ['paid', 'processing', 'awaiting_approval', 'ready_for_pickup'];
+  function addrLines(o) {
+    if (o.fulfillment !== 'shipping') return '';
+    return esc(o.ship_street || '') + (o.ship_street2 ? ', ' + esc(o.ship_street2) : '') + '<br>' + esc(o.ship_city || '') + ', ' + esc(o.ship_state || '') + ' ' + esc(o.ship_zip || '');
+  }
+  function orderCard(o, i) {
+    var ship = o.fulfillment === 'shipping', unpaid = o.payment_method === 'store' && !o.paid_at && ['canceled', 'expired'].indexOf(o.status) < 0;
+    var items = (o.items || []).filter(function (it) { return it.status !== 'canceled'; });
+    return '<div class="ocard ' + (ship ? 'o-ship' : 'o-pick') + (OPEN.indexOf(o.status) >= 0 ? ' o-open' : '') + '" data-href="#/orders/' + o.id + '" style="--d:' + Math.min(i || 0, 12) * 45 + 'ms" tabindex="0">' +
+      '<div class="oc-top"><div class="oc-who"><span class="oc-name">' + esc(o.name) + '</span>' +
+        '<span class="oc-contact"><a href="tel:' + esc(String(o.phone || '').replace(/[^\d+]/g, '')) + '">' + esc(o.phone || '') + '</a><a href="mailto:' + esc(o.email || '') + '" title="' + esc(o.email || '') + '">' + esc(o.email || '') + '</a></span></div>' +
+        '<div class="oc-sum"><span class="money">' + money(o.total_cents) + '</span><span class="muted small">#' + esc(o.code) + ' · ' + when(o.created_at) + '</span></div></div>' +
+      '<div class="oc-badges">' + fulBadge(o.fulfillment) + ' ' + statusBadge(o.status) + (unpaid ? ' <span class="badge b-warn">Pay at pickup</span>' : '') +
+        ' <span class="muted small">' + (o.item_count || items.reduce(function (a, b) { return a + b.qty; }, 0)) + ' item' + ((o.item_count || 0) === 1 ? '' : 's') + '</span></div>' +
+      '<ul class="oc-items">' + items.map(function (it, k) {
+        return '<li style="--k:' + k + '">' + (it.image_url ? '<img src="' + esc(it.image_url) + '" alt="" loading="lazy">' : '<span class="thumb"></span>') +
+          '<span class="oc-iname">' + esc(it.name) + (it.variation_name && it.variation_name !== 'Regular' ? ' <span class="muted">— ' + esc(it.variation_name) + '</span>' : '') + '</span>' +
+          '<span class="oc-qty">× ' + it.qty + '</span></li>';
+      }).join('') + '</ul>' +
+      '<div class="oc-dest">' + (ship ? '<span class="oc-pin">📍</span><span><b>Deliver to</b><br>' + addrLines(o) + (o.eta_date ? '<br><span class="muted small">Arriving ' + esc(prettyDay(o.eta_date)) + '</span>' : '') + '</span>'
+        : '<span class="oc-pin">🏬</span><span><b>Pickup at store</b>' + (unpaid ? '<br><span class="muted small">Collect ' + money(o.total_cents) + ' when they come</span>' : '') + '</span>') +
+        '<span class="oc-btns"><button class="btn small oc-print" data-print="' + o.id + '" data-what="slip" type="button">📋 Packing list</button><button class="btn small oc-print" data-print="' + o.id + '" data-what="label" type="button">🏷 Package label</button></span></div></div>';
+  }
+  // Open orders from the same person (same name + phone) are grouped so they can be packed together.
+  function renderOrderList(orders) {
+    var keyOf = function (o) { return String(o.name || '').trim().toLowerCase() + '|' + String(o.phone || '').replace(/\D/g, ''); };
+    var groups = {}, out = [], n = 0;
+    orders.forEach(function (o) {
+      if (OPEN.indexOf(o.status) >= 0) {
+        var k = keyOf(o);
+        if (!groups[k]) { groups[k] = { orders: [] }; out.push(groups[k]); }
+        groups[k].orders.push(o);
+      } else out.push({ orders: [o], single: true });
+    });
+    return out.map(function (g) {
+      if (g.single || g.orders.length === 1) return orderCard(g.orders[0], n++);
+      var first = g.orders[0];
+      return '<section class="ogroup" style="--d:' + Math.min(n, 12) * 45 + 'ms"><div class="og-head"><span><b>' + esc(first.name) + '</b> · ' + g.orders.length + ' open orders</span>' +
+        '<button class="btn small" type="button" data-printall="' + g.orders.map(function (o) { return o.id; }).join(',') + '">🖨 Print all (lists + labels)</button></div>' +
+        g.orders.map(function (o) { return orderCard(o, n++); }).join('') + '</section>';
+    }).join('');
+  }
+  function hookOrderCards(root, orders) {
+    var byId = {}; orders.forEach(function (o) { byId[o.id] = o; });
+    $$('.ocard', root).forEach(function (c) {
+      c.onclick = function (e) { if (e.target.closest('a,button')) return; location.hash = c.dataset.href; };
+      c.onkeydown = function (e) { if (e.key === 'Enter') location.hash = c.dataset.href; };
+    });
+    $$('[data-print]', root).forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); printSlips([byId[b.dataset.print]], b.dataset.what); }; });
+    $$('[data-printall]', root).forEach(function (b) { b.onclick = function () { printSlips(b.dataset.printall.split(',').map(function (id) { return byId[id]; }), 'both'); }; });
+  }
+  // Code 128-B barcode of the order number (scannable, like a shipping label).
+  var C128 = '11011001100 11001101100 11001100110 10010011000 10010001100 10001001100 10011001000 10011000100 10001100100 11001001000 11001000100 11000100100 10110011100 10011011100 10011001110 10111001100 10011101100 10011100110 11001110010 11001011100 11001001110 11011100100 11001110100 11101101110 11101001100 11100101100 11100100110 11101100100 11100110100 11100110010 11011011000 11011000110 11000110110 10100011000 10001011000 10001000110 10110001000 10001101000 10001100010 11010001000 11000101000 11000100010 10110111000 10110001110 10001101110 10111011000 10111000110 10001110110 11101110110 11010001110 11000101110 11011101000 11011100010 11011101110 11101011000 11101000110 11100010110 11101101000 11101100010 11100011010 11101111010 11001000010 11110001010 10100110000 10100001100 10010110000 10010000110 10000101100 10000100110 10110010000 10110000100 10011010000 10011000010 10000110100 10000110010 11000010010 11001010000 11110111010 11000010100 10001111010 10100111100 10010111100 10010011110 10111100100 10011110100 10011110010 11110100100 11110010100 11110010010 11011011110 11011110110 11110110110 10101111000 10100011110 10001011110 10111101000 10111100010 11110101000 11110100010 10111011110 10111101110 11101011110 11110101110 11010000100 11010010000 11010011100'.split(' ');
+  function barcode(text) {
+    var vals = [104], sum = 104;
+    String(text).split('').forEach(function (ch, i) { var v = ch.charCodeAt(0) - 32; if (v < 0 || v > 94) v = 0; vals.push(v); sum += v * (i + 1); });
+    vals.push(sum % 103);
+    var bits = vals.map(function (v) { return C128[v]; }).join('') + '1100011101011', x = 10, rects = '';
+    for (var i = 0; i < bits.length; i++) if (bits[i] === '1') { var w = 1; while (bits[i + 1] === '1') { w++; i++; } rects += '<rect x="' + (x + i - w + 1) + '" y="0" width="' + w + '" height="60"/>'; }
+    return '<svg class="bc" viewBox="0 0 ' + (bits.length + 20) + ' 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">' + rects + '</svg>';
+  }
+  var STORE_ADDR = null;
+  function storeAddr() { return STORE_ADDR ? Promise.resolve(STORE_ADDR) : fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) { STORE_ADDR = (c.store && c.store.address) || ''; return STORE_ADDR; }).catch(function () { return ''; }); }
+  function liveItems(o) { return (o.items || []).filter(function (it) { return it.status !== 'canceled'; }); }
+  // Packing list (for the worker): big name, contact, destination, every item with its photo and a tick box.
+  function slipHtml(o) {
+    var ship = o.fulfillment === 'shipping', unpaid = o.payment_method === 'store' && !o.paid_at;
+    return '<div class="slip"><div class="slip-head"><img src="/assets/img/logo-sm.png" alt=""><div><div class="slip-type">' + (ship ? 'DELIVERY' : 'PICKUP') + '</div><div>Order #' + esc(o.code) + ' · ' + new Date(o.created_at).toLocaleString() + '</div></div></div>' +
+      '<h1>' + esc(o.name) + '</h1><p>' + esc(o.phone || '') + ' · ' + esc(o.email || '') + '</p>' +
+      '<div class="slip-dest">' + (ship ? '<b>Deliver to:</b><br>' + esc(o.name) + '<br>' + addrLines(o) : '<b>Pickup at store</b>' + (unpaid ? ' — <b>NOT PAID: collect ' + money(o.total_cents) + '</b>' : ' — paid')) + '</div>' +
+      '<table class="slip-items"><tr><th></th><th></th><th>Item</th><th>Qty</th></tr>' + liveItems(o).map(function (it) {
+        return '<tr><td class="box">☐</td><td>' + (it.image_url ? '<img src="' + esc(it.image_url) + '" alt="">' : '') + '</td><td>' + esc(it.name) + (it.variation_name && it.variation_name !== 'Regular' ? ' — ' + esc(it.variation_name) : '') + '</td><td class="q">' + it.qty + '</td></tr>';
+      }).join('') + '</table><p class="slip-total">Total ' + money(o.total_cents) + '</p></div>';
+  }
+  // Package label (goes on the box, Amazon style). Delivery: name + full address + phone. Pickup: name + phone, no address.
+  function labelHtml(o, from) {
+    var ship = o.fulfillment === 'shipping', unpaid = o.payment_method === 'store' && !o.paid_at;
+    var n = liveItems(o).reduce(function (a, b) { return a + b.qty; }, 0);
+    var top = '<div class="lb-from"><b>FROM:</b> AGELESS' + (from ? '<br>' + esc(from).replace(/\n/g, '<br>') : '') + '</div>';
+    var band = '<div class="lb-band">' + (ship ? 'DELIVERY' : 'STORE PICKUP') + '</div>';
+    var to = ship
+      ? '<div class="lb-to"><div class="lb-lbl">SHIP TO:</div><div class="lb-name">' + esc(o.name).toUpperCase() + '</div><div class="lb-addr">' + esc(o.ship_street || '').toUpperCase() + (o.ship_street2 ? '<br>' + esc(o.ship_street2).toUpperCase() : '') + '<br><b>' + esc(o.ship_city || '').toUpperCase() + ', ' + esc(o.ship_state || '').toUpperCase() + ' ' + esc(o.ship_zip || '') + '</b></div><div class="lb-phone">☎ ' + esc(o.phone || '') + '</div></div>'
+      : '<div class="lb-to"><div class="lb-lbl">HOLD FOR:</div><div class="lb-name big">' + esc(o.name).toUpperCase() + '</div><div class="lb-phone">☎ ' + esc(o.phone || '') + '</div><div class="lb-pay ' + (unpaid ? 'due' : '') + '">' + (unpaid ? 'COLLECT ' + money(o.total_cents) : 'PAID') + '</div></div>';
+    var meta = '<div class="lb-meta"><span>' + n + ' item' + (n === 1 ? '' : 's') + '</span><span>' + new Date(o.created_at).toLocaleDateString() + '</span>' + (ship && o.eta_date ? '<span>Arrive by ' + esc(prettyDay(o.eta_date)) + '</span>' : '') + '</div>';
+    return '<div class="label">' + top + band + to + meta + '<div class="lb-code">' + barcode(o.code) + '<div>#' + esc(o.code) + '</div></div></div>';
+  }
+  // what: 'slip' (packing list), 'label' (package label) or 'both' (for each order: packing list page, then label page).
+  function printSlips(orders, what) {
+    what = what || 'both'; orders = orders.filter(Boolean);
+    var area = $('#printArea'); if (!area) { area = document.createElement('div'); area.id = 'printArea'; document.body.appendChild(area); }
+    storeAddr().then(function (from) {
+      area.className = what === 'label' ? 'only-labels' : ''; area.innerHTML = orders.map(function (o) { return (what !== 'label' ? slipHtml(o) : '') + (what !== 'slip' ? labelHtml(o, from) : ''); }).join('');
+      var imgs = $$('img', area), left = imgs.length, go = function () { setTimeout(function () { window.print(); }, 50); };
+      if (!left) return go();
+      imgs.forEach(function (im) { if (im.complete) { if (--left === 0) go(); } else im.onload = im.onerror = function () { if (--left === 0) go(); }; });
+    });
+  }
 
   // ---------------- orders ----------------
   function viewOrders() {
@@ -351,12 +449,13 @@
       '<label>From<input type="date" name="from"></label><label>To<input type="date" name="to"></label>' +
       '<label style="grid-column:1/-1">Search<input name="q" placeholder="Name, email, phone or order number"></label></form><div class="list" id="ol"></div><div class="center" id="more"></div>';
     var f = $('#flt'); ['status', 'fulfillment', 'from', 'to', 'q'].forEach(function (k) { if (qs.get(k)) f[k].value = qs.get(k); });
-    var page = 1;
+    var page = 1, loaded = [];
     function load(append) {
       var p = new URLSearchParams(new FormData(f)); p.set('page', page);
       api('/admin/orders?' + p).then(function (r) {
-        var ol = $('#ol'); var html = r.orders.map(orderRow).join('');
-        ol.innerHTML = append ? ol.innerHTML + html : (html || '<p class="muted center pad">No orders match.</p>');
+        var ol = $('#ol'); loaded = append ? loaded.concat(r.orders) : r.orders;
+        ol.innerHTML = loaded.length ? renderOrderList(loaded) : '<p class="muted center pad">No orders match.</p>';
+        hookOrderCards(ol, loaded);
         $('#more').innerHTML = r.more ? '<button class="btn">Load more</button>' : '';
         if (r.more) $('#more button').onclick = function () { page++; load(true); };
       }).catch(function (e) { toast(e.message, true); });
@@ -377,7 +476,7 @@
       if (['paid', 'processing', 'awaiting_approval'].indexOf(o.status) >= 0 && o.fulfillment === 'shipping') actions.push(['shipped', 'Mark shipped (emails customer)']);
       if (['ready_for_pickup', 'shipped', 'paid', 'processing'].indexOf(o.status) >= 0 && !unpaidStore) actions.push(['completed', o.fulfillment === 'pickup' ? 'Picked up — complete' : 'Delivered — complete']);
       var pendingSubs = o.substitutions.filter(function (s) { return s.status === 'pending'; });
-      app.innerHTML = '<a href="#/orders" class="muted small">← Orders</a><div class="row between"><h1>' + esc(o.code) + '</h1><div class="row">' + fulBadge(o.fulfillment) + statusBadge(o.status) + (o.payment_method === 'store' ? (o.paid_at ? '<span class="badge b-ok">Paid at store</span>' : '<span class="badge b-warn">Pay at pickup — not paid</span>') : '') + '</div></div>' +
+      app.innerHTML = '<a href="#/orders" class="muted small">← Orders</a><div class="row between"><h1>' + esc(o.code) + '</h1><div class="row">' + fulBadge(o.fulfillment) + statusBadge(o.status) + (o.payment_method === 'store' ? (o.paid_at ? '<span class="badge b-ok">Paid at store</span>' : '<span class="badge b-warn">Pay at pickup — not paid</span>') : '') + '<button class="btn small" id="slipBtn" type="button">📋 Packing list</button><button class="btn small" id="labelBtn" type="button">🏷 Package label</button></div></div>' +
         (unpaidStore && open ? '<div class="alert">The customer pays when they pick up. Collect <b>' + money(o.total_cents) + '</b> plus any sales tax at the register, then tap <b>Paid & picked up</b>.</div>' : '') +
         '<div class="grid g2"><div class="card"><h2>Customer</h2><dl class="kv"><dt>Name</dt><dd>' + esc(o.name) + '</dd><dt>Phone</dt><dd><a href="tel:' + esc(o.phone) + '">' + esc(o.phone) + '</a></dd>' +
         '<dt>Email</dt><dd><a href="mailto:' + esc(o.email) + '">' + esc(o.email) + '</a></dd>' + (addr ? '<dt>Ship to</dt><dd>' + addr + '</dd>' : '<dt>Pickup</dt><dd>In store at Eastland Mall</dd>') +
@@ -416,6 +515,7 @@
         act(b, api('/admin/orders/' + o.id + '/status', { method: 'POST', body: { status: to } }), 'Updated').then(function () { viewOrder(id); });
       }; });
       if ($('#etaBtn')) $('#etaBtn').onclick = function () { etaModal(o, id, false); };
+      $('#slipBtn').onclick = function () { printSlips([o], 'slip'); }; $('#labelBtn').onclick = function () { printSlips([o], 'label'); };
       $$('[data-unav]').forEach(function (b) { b.onclick = function () { if (confirm('Mark this item unavailable? You will then offer a same-price substitute or refund it.')) act(b, api('/admin/orders/' + o.id + '/items/' + b.dataset.unav + '/unavailable', { method: 'POST' })).then(function () { viewOrder(id); }); }; });
       $$('[data-sub]').forEach(function (b) { b.onclick = function () { substitutePicker(o, b.dataset.sub, id); }; });
       $$('[data-refitem]').forEach(function (b) { b.onclick = function () {

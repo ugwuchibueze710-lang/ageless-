@@ -187,7 +187,7 @@ function readCustomer(b) {
   const c = b.customer || {};
   const o = { name: str(c.name, 80), email: str(c.email, 120).toLowerCase(), phone: str(c.phone, 30), notes: text(b.notes, 500),
     fulfillment: b.fulfillment === 'shipping' ? 'shipping' : 'pickup' };
-  if (o.name.length < 2) fail(400, 'Please enter your full name.');
+  if (o.name.length < 3 || !/\S+\s+\S+/.test(o.name)) fail(400, 'Please enter your first and last name.');
   if (!isEmail(o.email)) fail(400, 'Please enter a valid email.');
   if (!isPhone(o.phone)) fail(400, 'Please enter a valid phone number.');
   if (o.fulfillment === 'shipping') {
@@ -863,11 +863,19 @@ on('GET', '/admin/orders', async ({ env, request, url }) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { w.push('created_at >= ?'); v.push(from); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { w.push('created_at < ?'); v.push(new Date(Date.parse(to) + 864e5).toISOString()); }
   const page = int(url.searchParams.get('page'), 1, 1000) || 1;
-  const rows = (await env.DB.prepare(`SELECT o.id, o.code, o.status, o.fulfillment, o.name, o.email, o.phone, o.ship_city, o.ship_state, o.total_cents, o.refunded_cents, o.created_at, o.paid_at, o.payment_method,
+  const rows = (await env.DB.prepare(`SELECT o.id, o.code, o.status, o.fulfillment, o.name, o.email, o.phone, o.ship_street, o.ship_street2, o.ship_city, o.ship_state, o.ship_zip, o.total_cents, o.refunded_cents, o.created_at, o.paid_at, o.payment_method, o.eta_date,
       (SELECT SUM(qty) FROM order_items WHERE order_id = o.id) AS item_count,
       (SELECT image_url FROM order_items WHERE order_id = o.id ORDER BY id LIMIT 1) AS image_url
     FROM orders o WHERE ${w.join(' AND ')} ORDER BY o.id DESC LIMIT 51 OFFSET ?`).bind(...v, (page - 1) * 50).all()).results;
-  return json({ orders: rows.slice(0, 50), more: rows.length > 50 });
+  const list = rows.slice(0, 50);
+  // every item of every order on this page, so the list can show them stacked with photos
+  if (list.length) {
+    const ids = list.map((o) => o.id);
+    const its = (await env.DB.prepare(`SELECT order_id, name, variation_name, image_url, qty, unit_cents, status FROM order_items WHERE order_id IN (${ids.map(() => '?').join(',')}) ORDER BY id`).bind(...ids).all()).results;
+    const by = {}; its.forEach((i) => { (by[i.order_id] = by[i.order_id] || []).push(i); });
+    list.forEach((o) => { o.items = by[o.id] || []; });
+  }
+  return json({ orders: list, more: rows.length > 50 });
 });
 on('GET', '/admin/orders/:id', async ({ env, request, params }) => {
   await requireStaff(env, request, 'orders');

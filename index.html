@@ -150,7 +150,7 @@
     <button type="button" class="back" id="backToCart">← Back to cart</button>
     <div id="coStep1">
       <h4>Your details</h4>
-      <label>Full name<input name="name" required autocomplete="name" maxlength="80"></label>
+      <label>Full name (first and last)<input name="name" required autocomplete="name" maxlength="80" pattern=".*\S+\s+\S+.*" title="Please enter your first and last name"></label>
       <label>Email<input name="email" type="email" required autocomplete="email" maxlength="120"></label>
       <label>Phone<input name="phone" type="tel" required autocomplete="tel" maxlength="30"></label>
       <fieldset class="seg" id="fulfil"><legend>How do you want it?</legend>

@@ -2,6 +2,8 @@
 // order details are never translated.
 (function () {
   var HE = {
+    // order cards + packing slip
+    'Deliver to': 'משלוח אל', 'Pickup at store': 'איסוף מהחנות', '🖨 Print': '🖨 הדפסה', '🖨 Print all': '🖨 הדפס הכול', '📋 Packing list': '📋 רשימת אריזה', '🏷 Package label': '🏷 מדבקה לחבילה', '🖨 Print all (lists + labels)': '🖨 הדפס הכל (רשימות + מדבקות)', '🖨 Print packing slip': '🖨 הדפסת תעודת אריזה',
     // Natan's login + setup link
     'Type your password to open the store admin.': 'כתוב את הסיסמה שלך כדי לפתוח את ניהול החנות.', 'Name': 'שם',
     'You stay logged in on this device until you tap Log out.': 'אתה נשאר מחובר במכשיר הזה עד שתלחץ התנתקות.',
@@ -169,6 +171,10 @@
     'Language': 'שפה',
   };
   var R = [
+    [/^· (\d+) open orders$/, '· $1 הזמנות פתוחות'],
+    [/^(\d+) items?$/, '$1 פריטים'],
+    [/^Collect (.+) when they come$/, 'לגבות $1 כשהלקוח מגיע'],
+    [/^Arriving (.+)$/, 'מגיע ב-$1'],
     [/^Hello (.+)$/, 'שלום $1'],
     [/^← Back to (.+)'s login$/, '← חזרה לכניסה של $1'],
     [/^Email will say: Arriving (.+)$/, 'האימייל יגיד: מגיע ב-$1'],
