@@ -3,7 +3,7 @@
 (function () {
   var HE = {
     // order cards + packing slip
-    'Deliver to': 'משלוח אל', 'Pickup at store': 'איסוף מהחנות', '🖨 Print': '🖨 הדפסה', '🖨 Print all': '🖨 הדפס הכול', '📋 Packing list': '📋 רשימת אריזה', '🏷 Package label': '🏷 מדבקה לחבילה', '🖨 Print all (lists + labels)': '🖨 הדפס הכל (רשימות + מדבקות)', '🖨 Print packing slip': '🖨 הדפסת תעודת אריזה',
+    'Deliver to': 'משלוח אל', '🏆 Top 5 best sellers': '🏆 5 המוצרים הנמכרים ביותר', 'Shown on the website': 'מוצג באתר', 'Hidden from the website': 'מוסתר מהאתר', 'Counts real paid orders from the last 30 days (older sales fill in if needed). Canceled and refunded orders don\'t count.': 'נספרות רק הזמנות ששולמו ב-30 הימים האחרונים (מכירות ישנות יותר משלימות אם צריך). הזמנות שבוטלו או הוחזרו לא נספרות.', 'No sales yet. The first paid orders will show up here and on the website automatically.': 'עדיין אין מכירות. ההזמנות הראשונות ששולמו יופיעו כאן ובאתר באופן אוטומטי.', 'Show the "Best Sellers" row (top 5) on the website': 'הצג באתר את שורת "רבי המכר" (5 המובילים)', 'Pickup at store': 'איסוף מהחנות', '🖨 Print': '🖨 הדפסה', '🖨 Print all': '🖨 הדפס הכול', '📋 Packing list': '📋 רשימת אריזה', '🏷 Package label': '🏷 מדבקה לחבילה', '🖨 Print all (lists + labels)': '🖨 הדפס הכל (רשימות + מדבקות)', '🖨 Print packing slip': '🖨 הדפסת תעודת אריזה',
     // Natan's login + setup link
     'Type your password to open the store admin.': 'כתוב את הסיסמה שלך כדי לפתוח את ניהול החנות.', 'Name': 'שם',
     'You stay logged in on this device until you tap Log out.': 'אתה נשאר מחובר במכשיר הזה עד שתלחץ התנתקות.',
@@ -173,6 +173,7 @@
   var R = [
     [/^· (\d+) open orders$/, '· $1 הזמנות פתוחות'],
     [/^(\d+) items?$/, '$1 פריטים'],
+    [/^(\d+) sold$/, '$1 נמכרו'],
     [/^Collect (.+) when they come$/, 'לגבות $1 כשהלקוח מגיע'],
     [/^Arriving (.+)$/, 'מגיע ב-$1'],
     [/^Hello (.+)$/, 'שלום $1'],

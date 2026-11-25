@@ -25,6 +25,21 @@ export async function availability(env, variationIds, exceptOrderId = 0) {
   return Object.fromEntries(rows.map((r) => [r.id, r.stock == null ? null : Math.max(0, r.stock - r.held)]));
 }
 
+// Best sellers: units sold from real orders (paid and not canceled/refunded/expired), last 30 days first,
+// topped up with all-time sales so the list fills as soon as possible. Only products still on sale count.
+const SOLD = "('paid','processing','awaiting_approval','ready_for_pickup','shipped','completed')";
+export async function topSellers(env, limit = 5) {
+  const q = (since) => env.DB.prepare(`SELECT i.product_id AS id, SUM(i.qty) AS units, SUM(i.qty * i.unit_cents) AS cents
+    FROM order_items i JOIN orders o ON o.id = i.order_id JOIN products p ON p.id = i.product_id
+    WHERE o.status IN ${SOLD} AND o.paid_at IS NOT NULL AND i.status IN ('ok','substituted') AND p.status = 'active' ${since ? 'AND o.paid_at >= ?' : ''}
+    GROUP BY i.product_id ORDER BY units DESC, cents DESC, MAX(o.paid_at) DESC LIMIT ?`).bind(...(since ? [since, limit] : [limit])).all();
+  const recent = (await q(new Date(Date.now() - 30 * 864e5).toISOString())).results;
+  if (recent.length >= limit) return recent.map((r) => ({ ...r, recent: true }));
+  const have = new Set(recent.map((r) => r.id));
+  const rest = (await q(null)).results.filter((r) => !have.has(r.id));
+  return recent.map((r) => ({ ...r, recent: true })).concat(rest).slice(0, limit);
+}
+
 export async function publicCatalog(env, slug) {
   const db = env.DB;
   const cats = (await db.prepare('SELECT id, name, slug FROM categories WHERE visible = 1 ORDER BY sort, name').all()).results;
@@ -38,7 +53,7 @@ export async function publicCatalog(env, slug) {
   const avail = await availability(env, vars.map((v) => v.id));
   const S = await getSettings(env);
   const catById = Object.fromEntries(cats.map((c) => [c.id, c]));
-  return {
+  const out = {
     categories: cats,
     products: prods.map((p) => {
       const pct = salePercent(S, p.category_id);
@@ -51,6 +66,10 @@ export async function publicCatalog(env, slug) {
         in_stock: pv.some((v) => v.purchasable), quantity_set: pv.every((v) => v.available != null) };
     }).filter((p) => p.variations.length),
   };
+  // Best Sellers row: ids only, ranked #1..#5, and only things a shopper can actually add to the cart right now.
+  const buyable = new Set(out.products.filter((p) => p.in_stock).map((p) => p.id));
+  out.bestsellers = !slug && S.bestsellers_enabled !== '0' ? (await topSellers(env, 12)).map((r) => r.id).filter((id) => buyable.has(id)).slice(0, 5) : [];
+  return out;
 }
 
 // Atomically reserve stock for an order. Returns list of variation ids that could not be held.

@@ -1,6 +1,9 @@
 // Shop translations: [English, Español, עברית, Français]
 (function () {
   var T = [
+    ['🔥 Best Sellers', '🔥 Los más vendidos', '🔥 רבי המכר', '🔥 Meilleures ventes'],
+    ["What everyone's grabbing right now", 'Lo que todos se están llevando ahora', 'מה שכולם חוטפים עכשיו', 'Ce que tout le monde s’arrache en ce moment'],
+    ['Best Seller', 'Más vendido', 'רב מכר', 'Meilleure vente'],
     ['Full name (first and last)', 'Nombre completo (nombre y apellido)', 'שם מלא (שם פרטי ושם משפחה)', 'Nom complet (prénom et nom)'],
     ['Please enter your first and last name.', 'Escribe tu nombre y apellido.', 'נא להזין שם פרטי ושם משפחה.', 'Veuillez entrer votre prénom et votre nom.'],
     ["We'll be right back", 'Volvemos enseguida', 'נחזור מיד', 'Nous revenons vite'],

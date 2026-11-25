@@ -41,19 +41,27 @@
     var q=(qIn.value||'').trim().toLowerCase();
     var list=PRODUCTS.filter(function(p){ return (cur==='all'||p.category===cur) && (!q || (p.name+' '+(p.description||'')+' '+(p.category_name||'')).toLowerCase().indexOf(q)>=0); });
     if(!list.length){ grid.innerHTML='<p class="shop-msg">'+(PRODUCTS.length?'Nothing matches that. Try another word or category.':'New toys are coming soon — visit the store to see everything on the shelves.')+'</p>'; return; }
-    grid.innerHTML=list.map(function(p,i){
+    grid.innerHTML=list.map(function(p,i){ return cardHtml(p,i,0); }).join('');
+  }
+  function cardHtml(p,i,rank){
       var v=p.variations[0], st=stockLabel(p), multi=p.variations.length>1, ok=p.variations.some(canAdd);
       var lp=p.variations.filter(function(x){return x.price_cents===p.min_price_cents;})[0].list_cents;
       var price=(multi&&p.variations.some(function(x){return x.price_cents!==p.min_price_cents;})?'From ':'')+(lp?'<s>'+money(lp)+'</s> ':'')+money(p.min_price_cents);
       return '<article class="card enter'+(ok?'':' sold')+'" style="animation-delay:'+(i*60)+'ms" data-id="'+p.id+'">'+
         '<div class="c-img" data-open="'+p.id+'"><img src="'+esc(p.images[0]||'assets/img/logo-sm.png')+'" alt="'+esc(p.name)+'" loading="lazy"><span class="shine"></span>'+
-        (st?'<span class="badge-st '+st.cls+'">'+st.t+'</span>':'')+(p.featured?'<span class="badge-st feat">★ Featured</span>':'')+'</div>'+
+        (st?'<span class="badge-st '+st.cls+'">'+st.t+'</span>':'')+(rank?'<span class="rank r'+rank+'"><b>#'+rank+'</b> Best Seller</span>':(p.featured?'<span class="badge-st feat">★ Featured</span>':''))+'</div>'+
         '<div class="c-body"><h3 class="c-name"><a href="#p/'+esc(p.slug)+'" data-open="'+p.id+'">'+esc(p.name)+'</a></h3><p class="c-note">'+esc(p.description||'')+'</p>'+
         '<div class="c-row"><span class="c-price">'+price+'</span>'+
         (multi?'<button class="btn btn-neon" data-open="'+p.id+'"'+(ok?'':' disabled')+'>'+(ok?'Choose':'Sold out')+'</button>'
               :'<button class="btn btn-neon add" data-v="'+v.id+'"'+(ok?'':' disabled')+'>'+(ok?'Add to Cart':(v.available===0?'Sold out':'In store'))+'</button>')+
         '</div></div></article>';
-    }).join('');
+  }
+  // ---------- best sellers (top 5 by real sales; the server sends ids in rank order, never numbers) ----------
+  var BEST=[], bestBox=$('best'), bestRow=$('bestRow');
+  function renderBest(){
+    var list=BEST.map(function(id){return PROD[id];}).filter(Boolean);
+    if(!bestBox) return; bestBox.hidden=!list.length; if(!list.length){ bestRow.innerHTML=''; return; }
+    bestRow.innerHTML=list.map(function(p,i){ return cardHtml(p,i,i+1); }).join('');
   }
   chips.addEventListener('click',function(e){var b=e.target.closest('.chip'); if(!b) return; cur=b.dataset.c; renderChips(); renderGrid();});
   qIn.addEventListener('input',function(){ renderGrid(); });
@@ -105,12 +113,13 @@
     }
   }
   function flashBtn(b,txt){ b.classList.add('added'); var o=b.textContent; b.textContent=txt||'Added ✓'; setTimeout(function(){ b.classList.remove('added'); b.textContent=o; },1300); }
-  grid.addEventListener('click',function(e){
+  function cardClick(e){
     var o=e.target.closest('[data-open]'); if(o){ e.preventDefault(); openProduct(+o.dataset.open); return; }
     var b=e.target.closest('.add'); if(!b||b.disabled) return;
     var v=VAR[b.dataset.v]; if(!roomFor(v,1)){ flashBtn(b,'Max in cart'); return; }
     var card=b.closest('.card'); fly(card.querySelector('.c-img img'),v.id,1,card); flashBtn(b);
-  });
+  }
+  grid.addEventListener('click',cardClick); if(bestRow) bestRow.addEventListener('click',cardClick);
   function roomFor(v,n){ return canAdd(v) && (cart[v.id]||0)+(pending[v.id]||0)+n<=maxQty(v); }
 
   // ---------- product detail ----------
@@ -294,11 +303,11 @@
 
   // ---------- load ----------
   function index(d){
-    PRODUCTS=d.products; CATS=d.categories; VAR={}; PROD={};
+    PRODUCTS=d.products; CATS=d.categories; BEST=d.bestsellers||[]; VAR={}; PROD={};
     PRODUCTS.forEach(function(p){ PROD[p.id]=p; p.variations.forEach(function(v){ v.product_id=p.id; VAR[v.id]=v; }); });
     Object.keys(cart).forEach(function(k){ if(!VAR[k]) delete cart[k]; }); save();
   }
-  function refreshCatalog(){ return api('/products').then(function(d){ index(d); renderGrid(); renderCart(); }).catch(function(){}); }
+  function refreshCatalog(){ return api('/products').then(function(d){ index(d); renderGrid(); renderBest(); renderCart(); }).catch(function(){}); }
   // Website switched off from BDT: a calm "back soon" screen; nobody can order (the server also refuses).
   function showOffline(msg){
     var d=document.createElement('div'); d.className='offline-screen'; d.setAttribute('role','dialog');
@@ -316,7 +325,7 @@
     if(st.phone){ var tel='tel:+1'+st.phone.replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''); [].forEach.call(document.querySelectorAll('a[href^="tel:"]'),function(x){ x.href=tel; if(/Call|\(\d{3}\)/.test(x.textContent)) x.textContent=x.id==='vCall'?'Call '+st.phone:st.phone; }); }
   }
   Promise.all([api('/config').catch(function(){ return {paymentsEnabled:false,payInStore:true}; }), api('/products')]).then(function(r){
-    CFG=r[0]; index(r[1]); applySite(); renderChips(); renderGrid(); renderCart(); fromHash();
+    CFG=r[0]; index(r[1]); applySite(); renderChips(); renderGrid(); renderBest(); renderCart(); fromHash();
     if(CFG.offline&&CFG.offline.on) showOffline(CFG.offline.message);
   }).catch(function(){
     grid.innerHTML='<p class="shop-msg">The shop could not load right now. Please refresh, or visit Ageless inside Eastland Mall.</p>'; renderCart();

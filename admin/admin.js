@@ -314,6 +314,17 @@
   }
 
   // ---------------- dashboard ----------------
+  // Top 5 best sellers (same list the website shows as "Best Sellers", plus units and dollars for staff).
+  function topCard(d) {
+    var t = d.top || [], max = t.length ? t[0].units : 1;
+    return '<div class="card topcard"><div class="row between"><h2>🏆 Top 5 best sellers</h2>' + (can('settings') ? '<a class="small" href="#/settings">' + (d.topPublic ? 'Shown on the website' : 'Hidden from the website') + '</a>' : '<span class="small muted">' + (d.topPublic ? 'Shown on the website' : 'Hidden from the website') + '</span>') + '</div>' +
+      (t.length ? '<ol class="tops">' + t.map(function (x, i) {
+        return '<li style="--k:' + i + '"><span class="tp-rank r' + (i + 1) + '">' + (i + 1) + '</span>' + (x.image ? '<img src="' + esc(x.image) + '" alt="">' : '<span class="thumb"></span>') +
+          '<span class="tp-main"><span class="tp-name">' + esc(x.name) + '</span><span class="tp-bar"><i style="width:' + Math.max(6, Math.round(x.units / max * 100)) + '%"></i></span></span>' +
+          '<span class="tp-num"><b>' + x.units + ' sold</b>' + (x.cents != null ? '<span class="muted small">' + money(x.cents) + '</span>' : '') + '</span></li>';
+      }).join('') + '</ol><p class="muted small">Counts real paid orders from the last 30 days (older sales fill in if needed). Canceled and refunded orders don\'t count.</p>'
+        : '<p class="muted">No sales yet. The first paid orders will show up here and on the website automatically.</p>') + '</div>';
+  }
   function viewHome() {
     api('/admin/dashboard').then(function (d) {
       var R = d.revenue;
@@ -328,6 +339,7 @@
         (d.alerts.length ? '<div class="card"><h2>Needs attention</h2>' + d.alerts.map(function (a) { return '<div class="alert bad row between"><span>' + esc(a.message) + (a.order_id ? ' <a href="#/orders/' + a.order_id + '">Open order</a>' : '') + '</span><button class="btn small" data-res="' + a.id + '">Done</button></div>'; }).join('') + '</div>' : '') +
         (R ? '<div class="grid g4">' + stat('Today', R.today) + stat('Last 7 days', R.week) + stat('Last 30 days', R.month) + stat('All time', R.all) + '</div>' +
         '<p class="muted small" style="margin:6px 0 14px">Sales after refunds, from paid website orders.</p>' : '') +
+        topCard(d) +
         '<div class="grid g2"><div class="card"><div class="row between"><h2>Recent orders</h2><a class="btn small" href="#/orders?status=open">' + open + ' open</a></div><div class="list">' +
         (d.recent.length ? d.recent.map(orderRow).join('') : '<p class="muted">No orders yet.</p>') + '</div></div>' +
         '<div><div class="card"><h2>Setup checklist</h2><ul class="checklist">' + check.map(function (c) { return '<li class="' + (c[0] ? 'done' : '') + '">' + c[1] + '</li>'; }).join('') + '</ul></div>' +
@@ -773,6 +785,7 @@
         '<label>Last day of the sale (optional)<input name="sale_ends" type="date" value="' + esc(s.sale_ends) + '"></label></div>' +
         '<p class="muted small">Sale prices show crossed out on the website and are charged at checkout. The sale ends by itself after the last day.</p>' +
         '<h2 style="margin-top:8px">Website text</h2>' +
+        '<label class="check"><input type="checkbox" name="bestsellers_enabled"' + (s.bestsellers_enabled !== '0' ? ' checked' : '') + '> Show the "Best Sellers" row (top 5) on the website</label>' +
         '<label>Announcement bar (top of the shop; leave empty to hide)<input name="site_announcement" maxlength="140" value="' + esc(s.site_announcement) + '" placeholder="e.g. New Demon Slayer plush just arrived!"></label>' +
         '<label>Rolling banner words (one per line)<textarea name="marquee_items" rows="5">' + esc(jsonList(s.marquee_items).join('\n')) + '</textarea></label>' +
         '<label>Store address (shown in Visit Us)<textarea name="store_address" rows="3">' + esc(s.store_address) + '</textarea></label>' +
@@ -802,7 +815,7 @@
           shipping_tiers: $$('tr', tb).filter(function (tr) { return $('[name=trate]', tr).value !== ''; }).map(function (tr) { return { min: $('[name=tmin]', tr).value || '0', rate: $('[name=trate]', tr).value }; }),
           pay_in_store_enabled: f.pay_in_store_enabled.checked, pickup_ready_text: f.pickup_ready_text.value, shipping_time_text: f.shipping_time_text.value, delivery_days: f.delivery_days.value, pickup_hold_days: f.pickup_hold_days.value,
           sale_enabled: f.sale_enabled.checked, sale_percent: f.sale_percent.value, sale_category_id: f.sale_category_id.value, sale_label: f.sale_label.value, sale_ends: f.sale_ends.value,
-          site_announcement: f.site_announcement.value, marquee_items: f.marquee_items.value.split('\n'), store_address: f.store_address.value,
+          bestsellers_enabled: f.bestsellers_enabled.checked, site_announcement: f.site_announcement.value, marquee_items: f.marquee_items.value.split('\n'), store_address: f.store_address.value,
           store_hours: $$('tr', hb).map(function (tr) { return [$('[name=hday]', tr).value, $('[name=htime]', tr).value]; }) };
         checkedSave(f.querySelector('.big'), 'settings', body, function () { return api('/admin/settings', { method: 'PUT', body: body }); }).then(function (x) { if (x) { toast('Settings saved'); viewSettings(); } });
       };

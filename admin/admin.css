@@ -224,3 +224,19 @@ html[dir="rtl"] input[type=email],html[dir="rtl"] input[type=tel],html[dir="rtl"
 .oc-who { flex: 1 1 auto; }
 .oc-sum { flex: 0 0 auto; }
 .oc-contact a { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- top 5 best sellers (admin home) ---------- */
+.tops { list-style: none; margin: 8px 0 6px; padding: 0; display: grid; gap: 8px; }
+.tops li { display: grid; grid-template-columns: 30px 46px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,.03); border: 1px solid var(--line); opacity: 0; animation: tpIn .5s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: calc(var(--k) * 90ms); }
+.tops img, .tops .thumb { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; }
+.tp-rank { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--line); }
+.tp-rank.r1 { background: linear-gradient(135deg,#ffe27a,#d4a017); color: #222; } .tp-rank.r2 { background: linear-gradient(135deg,#f0f0f0,#a9a9a9); color: #222; } .tp-rank.r3 { background: linear-gradient(135deg,#f3b07a,#b8682a); color: #222; }
+.tp-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.tp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tp-bar { height: 6px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.tp-bar i { display: block; height: 100%; border-radius: 6px; background: var(--lav); transform-origin: left; animation: tpBar .9s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--k) * 90ms + 200ms); }
+.tp-num { text-align: right; display: flex; flex-direction: column; }
+@keyframes tpIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes tpBar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+[dir="rtl"] .tp-num { text-align: left; } [dir="rtl"] .tp-bar i { transform-origin: right; }
+@media (prefers-reduced-motion: reduce) { .tops li, .tp-bar i { animation: none; opacity: 1; } }

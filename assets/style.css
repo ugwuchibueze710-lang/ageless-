@@ -349,3 +349,21 @@ html[dir="rtl"] .badge-st{left:auto;right:12px}html[dir="rtl"] .badge-st.feat{ri
 .offline-card{max-width:420px;text-align:center;color:#f7f5fb}
 .offline-card img{width:150px;margin-bottom:14px}
 .offline-card h2{margin-bottom:8px}
+
+/* ---------- Best Sellers (top 5) ---------- */
+.best[hidden]{display:none}
+.best{margin:0 0 34px;padding:22px 18px 8px;border-radius:24px;background:radial-gradient(120% 90% at 50% 0%,rgba(185,162,255,.14),transparent 70%);border:1px solid rgba(225,212,255,.18)}
+.best-head{text-align:center;margin-bottom:16px}
+.best-head h3{font-family:Cinzel,serif;font-weight:900;font-size:clamp(22px,3vw,34px);text-shadow:0 0 6px #fff,0 0 18px rgba(255,180,120,.55)}
+.best-head p{color:var(--mut);margin-top:4px;font-size:14px}
+.best-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(210px,236px);justify-content:safe center;gap:18px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.best-row .card{scroll-snap-align:start}
+@media (max-width:700px){.best-row{grid-auto-columns:72%}}
+.rank{position:absolute;z-index:3;bottom:12px;left:12px;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:rgba(10,8,16,.82);border:1px solid rgba(255,255,255,.35);backdrop-filter:blur(4px)}
+.rank b{font-size:14px;margin-right:2px}
+.rank.r1{background:linear-gradient(135deg,#ffe27a,#d4a017);color:#1b1405;border-color:#fff3c2;box-shadow:0 0 16px rgba(255,214,90,.65);animation:rankGlow 2.4s ease-in-out infinite}
+.rank.r2{background:linear-gradient(135deg,#ffffff,#a9a9b3);color:#15141a;border-color:#fff}
+.rank.r3{background:linear-gradient(135deg,#f3b07a,#b8682a);color:#1d0f04;border-color:#ffd9b8}
+@keyframes rankGlow{0%,100%{box-shadow:0 0 10px rgba(255,214,90,.45)}50%{box-shadow:0 0 22px rgba(255,214,90,.9)}}
+@media (prefers-reduced-motion:reduce){.rank.r1{animation:none}}
+[dir="rtl"] .rank{left:auto;right:12px}

@@ -7,7 +7,7 @@ import { aiChat, aiReview, ruleCheck, aiConfigured, allowedPath, riskOf } from '
 import * as sq from '../_lib/square.js';
 import { notify } from '../_lib/email.js';
 import * as bdt from '../_lib/bdt.js';
-import { cleanupExpired, availability, publicCatalog, placeHolds, event, loadOrder, markPaid, raiseAlert, orderLink, assertTransition, imgUrl } from '../_lib/store.js';
+import { cleanupExpired, availability, publicCatalog, placeHolds, event, loadOrder, markPaid, raiseAlert, orderLink, assertTransition, imgUrl, topSellers } from '../_lib/store.js';
 
 const routes = [];
 const on = (method, pattern, fn) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), fn });
@@ -840,7 +840,16 @@ on('GET', '/admin/dashboard', async ({ env, request }) => {
   const c = await sq.connection(env);
   const unsent = await env.DB.prepare("SELECT COUNT(*) AS n FROM outbox WHERE status != 'sent'").first();
   const me = request.__staff;
-  return json({ revenue: me.perms.includes('sales') ? { today, week, month, all } : null, byStatus, lowStock, noQuantity: noQty.n, alerts, recent,
+  const tops = await topSellers(env, 5);
+  let top = [];
+  if (tops.length) {
+    const ids = tops.map((t) => t.id), ph = ids.map(() => '?').join(',');
+    const names = Object.fromEntries((await env.DB.prepare(`SELECT id, name, slug FROM products WHERE id IN (${ph})`).bind(...ids).all()).results.map((r) => [r.id, r]));
+    const pics = {}; (await env.DB.prepare(`SELECT id, product_id, url FROM product_images WHERE product_id IN (${ph}) ORDER BY sort, id`).bind(...ids).all()).results.forEach((r) => { if (!pics[r.product_id]) pics[r.product_id] = imgUrl(r); });
+    top = tops.map((t) => ({ id: t.id, name: names[t.id]?.name || '', image: pics[t.id] || null, units: t.units, cents: me.perms.includes('sales') ? t.cents : null, recent: !!t.recent }));
+  }
+  const S0 = await getSettings(env);
+  return json({ revenue: me.perms.includes('sales') ? { today, week, month, all } : null, top, topPublic: S0.bestsellers_enabled !== '0', byStatus, lowStock, noQuantity: noQty.n, alerts, recent,
     square: { appConfigured: sq.appConfigured(env), connected: await sq.isConnected(env), env: sq.squareEnv(env), location: c?.locationName || null },
     email: { configured: !!(env.RESEND_API_KEY && env.EMAIL_FROM), unsent: unsent.n } });
 });
@@ -1221,7 +1230,7 @@ on('DELETE', '/admin/categories/:id', async ({ env, request, params }) => {
 // ======================================================================
 const EDITABLE = ['shipping_enabled', 'pickup_enabled', 'shipping_mode', 'shipping_flat_cents', 'shipping_free_over_cents', 'shipping_tiers', 'shipping_note', 'pickup_instructions', 'store_email', 'store_phone', 'hold_minutes',
   'pay_in_store_enabled', 'pickup_ready_text', 'shipping_time_text', 'delivery_days', 'pickup_hold_days', 'site_announcement', 'marquee_items', 'store_address', 'store_hours',
-  'sale_enabled', 'sale_percent', 'sale_category_id', 'sale_label', 'sale_ends'];
+  'sale_enabled', 'sale_percent', 'sale_category_id', 'sale_label', 'sale_ends', 'bestsellers_enabled'];
 on('GET', '/admin/settings', async ({ env, request }) => {
   await requireStaff(env, request, 'settings');
   const s = await getSettings(env);
